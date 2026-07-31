@@ -45,32 +45,6 @@ rigScene.traverse((node) => {
 });
 const boneByName = new Map(bones.map((bone) => [bone.name, bone]));
 
-// Capture the proven male-mesh skinning before removing its visible geometry.
-// Bone proximity alone cannot tell where a shoulder or elbow surface should
-// bend; nearest-surface weight transfer preserves those authored joint zones.
-const referenceVertices = [];
-for (const mesh of oldMeshes) {
-  if (!mesh.isSkinnedMesh) continue;
-  const meshPositions = mesh.geometry.getAttribute("position");
-  const meshIndices = mesh.geometry.getAttribute("skinIndex");
-  const meshWeights = mesh.geometry.getAttribute("skinWeight");
-  if (!meshPositions || !meshIndices || !meshWeights) continue;
-  for (let vertex = 0; vertex < meshPositions.count; vertex++) {
-    const indices = [];
-    const weights = [];
-    for (let slot = 0; slot < 4; slot++) {
-      const sourceIndex = meshIndices.getComponent(vertex, slot);
-      const sourceBone = mesh.skeleton.bones[sourceIndex];
-      indices.push(sourceBone ? bones.indexOf(boneByName.get(sourceBone.name)) : 0);
-      weights.push(meshWeights.getComponent(vertex, slot));
-    }
-    referenceVertices.push({
-      point: new THREE.Vector3().fromBufferAttribute(meshPositions, vertex).applyMatrix4(mesh.matrixWorld),
-      indices,
-      weights,
-    });
-  }
-}
 for (const mesh of oldMeshes) mesh.parent?.remove(mesh);
 
 let geometry = sourceMesh.geometry.clone();
@@ -88,59 +62,50 @@ const scale = targetHeight / Math.max(sourceSize.y, 0.001);
 const normalize = new THREE.Matrix4().makeScale(scale, scale, scale);
 normalize.setPosition(-sourceCenter.x * scale, rigBounds.min.y - sourceBox.min.y * scale, -sourceCenter.z * scale);
 geometry.applyMatrix4(normalize);
-// Detach shared indexed vertices so a low-poly triangle can move as one rigid
-// face. Otherwise one corner can follow the torso while another follows a hand,
-// creating the enormous spikes visible in the recording.
-if (geometry.index) geometry = geometry.toNonIndexed();
 geometry.computeVertexNormals();
 geometry.computeBoundingBox();
+
+const segments = [
+  ["hip_02", "abdomen_03"], ["abdomen_03", "chest_04"], ["chest_04", "neck_05"], ["neck_05", "head_06"],
+  ["rCollar_017", "rShldr_018"], ["rShldr_018", "rForeArm_019"], ["rForeArm_019", "rHand_020"],
+  ["lCollar_041", "lShldr_042"], ["lShldr_042", "lForeArm_043"], ["lForeArm_043", "lHand_044"],
+  ["rThigh_083", "rShin_084"], ["rShin_084", "rFoot_085"], ["rFoot_085", "rToe_086"],
+  ["lThigh_0100", "lShin_0101"], ["lShin_0101", "lFoot_0102"], ["lFoot_0102", "lToe_0103"],
+].map(([startName, endName]) => {
+  const startBone = boneByName.get(startName), endBone = boneByName.get(endName);
+  return {
+    startIndex: bones.indexOf(startBone),
+    endIndex: bones.indexOf(endBone),
+    start: startBone.getWorldPosition(new THREE.Vector3()),
+    end: endBone.getWorldPosition(new THREE.Vector3()),
+  };
+});
+
+function segmentProjection(point, segment) {
+  const line = segment.end.clone().sub(segment.start);
+  const lengthSq = line.lengthSq();
+  const amount = lengthSq ? THREE.MathUtils.clamp(point.clone().sub(segment.start).dot(line) / lengthSq, 0, 1) : 0;
+  const nearest = segment.start.clone().addScaledVector(line, amount);
+  return { amount, distance: point.distanceToSquared(nearest) };
+}
 
 const positions = geometry.getAttribute("position");
 const skinIndices = new Uint16Array(positions.count * 4);
 const skinWeights = new Float32Array(positions.count * 4);
-const cellSize = 0.5;
-const referenceGrid = new Map();
-const cellKey = (x, y, z) => `${x},${y},${z}`;
-for (const reference of referenceVertices) {
-  const x = Math.floor(reference.point.x / cellSize);
-  const y = Math.floor(reference.point.y / cellSize);
-  const z = Math.floor(reference.point.z / cellSize);
-  const key = cellKey(x, y, z);
-  if (!referenceGrid.has(key)) referenceGrid.set(key, []);
-  referenceGrid.get(key).push(reference);
+for (let vertex = 0; vertex < positions.count; vertex++) {
+  const point = new THREE.Vector3().fromBufferAttribute(positions, vertex);
+  const nearest = segments
+    .map((segment) => ({ segment, ...segmentProjection(point, segment) }))
+    .sort((a, b) => a.distance - b.distance)[0];
+  // Smooth only across this single joint. No vertex can mix a torso/arm,
+  // left/right, or arm/leg chain as the earlier proximity blend allowed.
+  const blend = THREE.MathUtils.smoothstep(nearest.amount, 0.15, 0.85);
+  skinIndices[vertex * 4] = nearest.segment.startIndex;
+  skinIndices[vertex * 4 + 1] = nearest.segment.endIndex;
+  skinWeights[vertex * 4] = 1 - blend;
+  skinWeights[vertex * 4 + 1] = blend;
 }
-for (let triangle = 0; triangle + 2 < positions.count; triangle += 3) {
-  const point = new THREE.Vector3();
-  for (let corner = 0; corner < 3; corner++) {
-    point.add(new THREE.Vector3().fromBufferAttribute(positions, triangle + corner));
-  }
-  point.multiplyScalar(1 / 3);
-  const cx = Math.floor(point.x / cellSize), cy = Math.floor(point.y / cellSize), cz = Math.floor(point.z / cellSize);
-  let candidates = [];
-  for (let radius = 0; radius <= 8 && candidates.length === 0; radius++) {
-    for (let x = cx - radius; x <= cx + radius; x++) for (let y = cy - radius; y <= cy + radius; y++) {
-      for (let z = cz - radius; z <= cz + radius; z++) {
-        if (radius && Math.max(Math.abs(x - cx), Math.abs(y - cy), Math.abs(z - cz)) !== radius) continue;
-        candidates.push(...(referenceGrid.get(cellKey(x, y, z)) ?? []));
-      }
-    }
-  }
-  let nearest = candidates[0];
-  let nearestDistance = Infinity;
-  for (const candidate of candidates) {
-    const distance = point.distanceToSquared(candidate.point);
-    if (distance < nearestDistance) { nearest = candidate; nearestDistance = distance; }
-  }
-  if (!nearest) throw new Error(`No reference skin weights found for triangle ${triangle / 3}.`);
-  const total = nearest.weights.reduce((sum, weight) => sum + weight, 0) || 1;
-  for (let corner = 0; corner < 3; corner++) {
-    for (let slot = 0; slot < 4; slot++) {
-      skinIndices[(triangle + corner) * 4 + slot] = nearest.indices[slot];
-      skinWeights[(triangle + corner) * 4 + slot] = nearest.weights[slot] / total;
-    }
-  }
-}
-console.log(`Transferred skinning from ${referenceVertices.length} authored male-mesh vertices.`);
+console.log(`Applied continuous single-chain skinning across ${segments.length} anatomical segments.`);
 geometry.setAttribute("skinIndex", new THREE.Uint16BufferAttribute(skinIndices, 4));
 geometry.setAttribute("skinWeight", new THREE.Float32BufferAttribute(skinWeights, 4));
 
