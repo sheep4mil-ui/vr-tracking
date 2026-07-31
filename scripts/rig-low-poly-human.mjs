@@ -94,7 +94,10 @@ const positions = geometry.getAttribute("position");
 const skinIndices = new Uint16Array(positions.count * 4);
 const skinWeights = new Float32Array(positions.count * 4);
 const normalizedSize = geometry.boundingBox.getSize(new THREE.Vector3());
-const armXThreshold = normalizedSize.x * 0.2;
+// Only the far-outer silhouette is unambiguously hand/finger geometry in the
+// A-pose. A wider 20% cutoff also captured the broad hips and pulled them up
+// with the hands; 30% stays outside the torso/hip envelope.
+const armXThreshold = normalizedSize.x * 0.3;
 const armYThreshold = geometry.boundingBox.min.y + normalizedSize.y * 0.32;
 for (let vertex = 0; vertex < positions.count; vertex++) {
   const point = new THREE.Vector3().fromBufferAttribute(positions, vertex);
