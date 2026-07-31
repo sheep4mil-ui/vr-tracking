@@ -54,6 +54,8 @@ export default function MotionStudio() {
   const [connectionState, setConnectionState] = useState("Not connected");
   const [swapSides, setSwapSides] = useState(true);
   const swapSidesRef = useRef(true);
+  const [swapArms, setSwapArms] = useState(true);
+  const swapArmsRef = useRef(true);
   const [upperBodyOnly, setUpperBodyOnly] = useState(false);
   const upperBodyOnlyRef = useRef(false);
   const smoothedPointsRef = useRef<THREE.Vector3[]>([]);
@@ -257,14 +259,16 @@ export default function MotionStudio() {
     const right = { shoulder: 12, elbow: 14, wrist: 16, hand: [18, 20, 22], hip: 24, knee: 26, ankle: 28, foot: 32 };
     const leftLeg = swapSidesRef.current ? right : left;
     const rightLeg = swapSidesRef.current ? left : right;
+    const leftArm = swapArmsRef.current ? right : left;
+    const rightArm = swapArmsRef.current ? left : right;
     const table: Record<string, [THREE.Vector3, THREE.Vector3]> = {
       hip: [hip.clone().add(new THREE.Vector3(0, -0.25, 0)), hip],
       abdomen: [hip, shoulders.clone().lerp(hip, 0.48)],
       chest: [hip.clone().lerp(shoulders, 0.48), shoulders],
       neck: [shoulders, p[0]],
       head: [shoulders.clone().lerp(p[0], 0.65), p[0]],
-      rCollar: [shoulders, p[right.shoulder]], rShldr: [p[right.shoulder], p[right.elbow]], rForeArm: [p[right.elbow], p[right.wrist]], rHand: [p[right.wrist], hand(...right.hand as [number, number, number])],
-      lCollar: [shoulders, p[left.shoulder]], lShldr: [p[left.shoulder], p[left.elbow]], lForeArm: [p[left.elbow], p[left.wrist]], lHand: [p[left.wrist], hand(...left.hand as [number, number, number])],
+      rCollar: [shoulders, p[right.shoulder]], rShldr: [p[rightArm.shoulder], p[rightArm.elbow]], rForeArm: [p[rightArm.elbow], p[rightArm.wrist]], rHand: [p[right.wrist], hand(...right.hand as [number, number, number])],
+      lCollar: [shoulders, p[left.shoulder]], lShldr: [p[leftArm.shoulder], p[leftArm.elbow]], lForeArm: [p[leftArm.elbow], p[leftArm.wrist]], lHand: [p[left.wrist], hand(...left.hand as [number, number, number])],
       rThigh: [p[rightLeg.hip], p[rightLeg.knee]], rShin: [p[rightLeg.knee], p[rightLeg.ankle]], rFoot: [p[rightLeg.ankle], p[rightLeg.foot]],
       lThigh: [p[leftLeg.hip], p[leftLeg.knee]], lShin: [p[leftLeg.knee], p[leftLeg.ankle]], lFoot: [p[leftLeg.ankle], p[leftLeg.foot]],
     };
@@ -668,6 +672,17 @@ export default function MotionStudio() {
               }}
             />
             Swap legs left/right
+          </label>
+          <label className="calibration-toggle">
+            <input
+              type="checkbox"
+              checked={swapArms}
+              onChange={(event) => {
+                swapArmsRef.current = event.target.checked;
+                setSwapArms(event.target.checked);
+              }}
+            />
+            Swap arms left/right
           </label>
           <label className="calibration-toggle">
             <input
