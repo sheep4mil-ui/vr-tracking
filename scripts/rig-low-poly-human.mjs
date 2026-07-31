@@ -65,6 +65,31 @@ geometry.applyMatrix4(normalize);
 geometry.computeVertexNormals();
 geometry.computeBoundingBox();
 
+// Fit the donor armature to this mesh's narrower/lower A-pose. The donor hand
+// pivots sit outside the low-poly geometry, which makes arms orbit through the
+// torso and causes hands to fold around empty space even with correct weights.
+const fittedBox = geometry.boundingBox;
+const fittedSize = fittedBox.getSize(new THREE.Vector3());
+const centerZ = fittedBox.getCenter(new THREE.Vector3()).z;
+function setBoneWorldPosition(name, target) {
+  const bone = boneByName.get(name);
+  if (!bone?.parent) return;
+  rigScene.updateMatrixWorld(true);
+  bone.position.copy(bone.parent.worldToLocal(target.clone()));
+  rigScene.updateMatrixWorld(true);
+}
+for (const [prefix, side] of [["r", -1], ["l", 1]]) {
+  const joint = (xRatio, yRatio, zOffset = 0) => new THREE.Vector3(
+    side * fittedSize.x * xRatio,
+    fittedBox.min.y + fittedSize.y * yRatio,
+    centerZ + zOffset,
+  );
+  setBoneWorldPosition(`${prefix}Collar_${prefix === "r" ? "017" : "041"}`, joint(0.055, 0.805, -0.12));
+  setBoneWorldPosition(`${prefix}Shldr_${prefix === "r" ? "018" : "042"}`, joint(0.22, 0.79, -0.05));
+  setBoneWorldPosition(`${prefix}ForeArm_${prefix === "r" ? "019" : "043"}`, joint(0.36, 0.66, 0.02));
+  setBoneWorldPosition(`${prefix}Hand_${prefix === "r" ? "020" : "044"}`, joint(0.44, 0.54, 0.18));
+}
+
 const segments = [
   ["hip_02", "abdomen_03"], ["abdomen_03", "chest_04"], ["chest_04", "neck_05"], ["neck_05", "head_06"],
   ["rCollar_017", "rShldr_018"], ["rShldr_018", "rForeArm_019"], ["rForeArm_019", "rHand_020"],

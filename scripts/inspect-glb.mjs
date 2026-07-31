@@ -8,11 +8,17 @@ const bytes = fs.readFileSync(path);
 const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
 const gltf = await new Promise((resolve, reject) => new GLTFLoader().parse(buffer, "", resolve, reject));
 const bones = [];
+const bonePositions = {};
 const meshes = [];
 const skins = [];
 gltf.scene.updateMatrixWorld(true);
 gltf.scene.traverse((node) => {
-  if (node.isBone) bones.push(node.name);
+  if (node.isBone) {
+    bones.push(node.name);
+    if (/^(hip|chest|neck|head|[rl](Collar|Shldr|ForeArm|Hand|Thigh|Shin|Foot))_/.test(node.name)) {
+      bonePositions[node.name] = node.getWorldPosition(new THREE.Vector3()).toArray();
+    }
+  }
   if (node.isMesh) meshes.push({
     name: node.name,
     skinned: Boolean(node.isSkinnedMesh),
@@ -26,6 +32,7 @@ console.log(JSON.stringify({
   bytes: bytes.length,
   bones: bones.length,
   boneNames: bones,
+  bonePositions,
   meshes,
   skins,
   size: box.getSize(new THREE.Vector3()).toArray(),
