@@ -121,16 +121,22 @@ function segmentProjection(point, segment) {
 const unindexed = geometry.index ? geometry.toNonIndexed() : geometry;
 const unindexedPositions = unindexed.getAttribute("position");
 const keptVertices = [];
+const forceBodyMask = [];
 for (let triangle = 0; triangle + 2 < unindexedPositions.count; triangle += 3) {
-  let touchesArm = false;
+  let armCorners = 0;
   for (let corner = 0; corner < 3; corner++) {
     const point = new THREE.Vector3().fromBufferAttribute(unindexedPositions, triangle + corner);
     const nearest = segments
       .map((segment) => ({ segment, ...segmentProjection(point, segment) }))
       .sort((a, b) => a.distance - b.distance)[0];
-    if (nearest.segment.isArm) { touchesArm = true; break; }
+    if (nearest.segment.isArm) armCorners++;
   }
-  if (!touchesArm) keptVertices.push(triangle, triangle + 1, triangle + 2);
+  // Remove only faces wholly owned by an arm. Mixed faces form the chest and
+  // shoulder boundary; preserve them, but force their weights onto body bones
+  // so they cannot stretch with the replacement arm pieces.
+  if (armCorners === 3) continue;
+  keptVertices.push(triangle, triangle + 1, triangle + 2);
+  forceBodyMask.push(armCorners > 0, armCorners > 0, armCorners > 0);
 }
 const bodyGeometry = new THREE.BufferGeometry();
 for (const name of Object.keys(unindexed.attributes)) {
@@ -151,7 +157,8 @@ const skinIndices = new Uint16Array(positions.count * 4);
 const skinWeights = new Float32Array(positions.count * 4);
 for (let vertex = 0; vertex < positions.count; vertex++) {
   const point = new THREE.Vector3().fromBufferAttribute(positions, vertex);
-  const nearest = segments
+  const candidates = forceBodyMask[vertex] ? segments.filter((segment) => !segment.isArm) : segments;
+  const nearest = candidates
     .map((segment) => ({ segment, ...segmentProjection(point, segment) }))
     .sort((a, b) => a.distance - b.distance)[0];
   // Smooth only across this single joint. No vertex can mix a torso/arm,
