@@ -200,8 +200,7 @@ export default function MotionStudio() {
 
   function updateRig(world: NormalizedLandmark[]) {
     if (!world.length) return;
-    const mirror = swapSidesRef.current ? 1 : -1;
-    const rawPoints = world.map((p) => new THREE.Vector3(p.x * 3.2 * mirror, -p.y * 3.2, -p.z * 3.2));
+    const rawPoints = world.map((p) => new THREE.Vector3(-p.x * 3.2, -p.y * 3.2, -p.z * 3.2));
     if (smoothedPointsRef.current.length !== rawPoints.length) {
       smoothedPointsRef.current = rawPoints.map((point) => point.clone());
     } else {
@@ -228,6 +227,8 @@ export default function MotionStudio() {
     const hand = (a: number, b: number, c: number) => p[a].clone().add(p[b]).add(p[c]).multiplyScalar(1 / 3);
     const left = { shoulder: 11, elbow: 13, wrist: 15, hand: [17, 19, 21], hip: 23, knee: 25, ankle: 27, foot: 31 };
     const right = { shoulder: 12, elbow: 14, wrist: 16, hand: [18, 20, 22], hip: 24, knee: 26, ankle: 28, foot: 32 };
+    const leftLeg = swapSidesRef.current ? right : left;
+    const rightLeg = swapSidesRef.current ? left : right;
     const table: Record<string, [THREE.Vector3, THREE.Vector3]> = {
       hip: [hip.clone().add(new THREE.Vector3(0, -0.25, 0)), hip],
       abdomen: [hip, shoulders.clone().lerp(hip, 0.48)],
@@ -236,8 +237,8 @@ export default function MotionStudio() {
       head: [shoulders.clone().lerp(p[0], 0.65), p[0]],
       rCollar: [shoulders, p[right.shoulder]], rShldr: [p[right.shoulder], p[right.elbow]], rForeArm: [p[right.elbow], p[right.wrist]], rHand: [p[right.wrist], hand(...right.hand as [number, number, number])],
       lCollar: [shoulders, p[left.shoulder]], lShldr: [p[left.shoulder], p[left.elbow]], lForeArm: [p[left.elbow], p[left.wrist]], lHand: [p[left.wrist], hand(...left.hand as [number, number, number])],
-      rThigh: [p[right.hip], p[right.knee]], rShin: [p[right.knee], p[right.ankle]], rFoot: [p[right.ankle], p[right.foot]],
-      lThigh: [p[left.hip], p[left.knee]], lShin: [p[left.knee], p[left.ankle]], lFoot: [p[left.ankle], p[left.foot]],
+      rThigh: [p[rightLeg.hip], p[rightLeg.knee]], rShin: [p[rightLeg.knee], p[rightLeg.ankle]], rFoot: [p[rightLeg.ankle], p[rightLeg.foot]],
+      lThigh: [p[leftLeg.hip], p[leftLeg.knee]], lShin: [p[leftLeg.knee], p[leftLeg.ankle]], lFoot: [p[leftLeg.ankle], p[leftLeg.foot]],
     };
     return table[semantic];
   }
@@ -509,7 +510,7 @@ export default function MotionStudio() {
                 setSwapSides(event.target.checked);
               }}
             />
-            Mirror avatar direction
+            Swap legs left/right
           </label>
           <label className="file-button">
             <input type="file" accept=".glb,model/gltf-binary" onChange={loadModel} />
