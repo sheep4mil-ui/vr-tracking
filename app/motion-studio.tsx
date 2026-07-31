@@ -386,16 +386,20 @@ export default function MotionStudio() {
   }
 
   function updateFace(values: Record<string, number>) {
+    const sensitiveMouthValue = (name: string, score: number) => {
+      if (name !== "jawOpen" && !name.startsWith("mouth")) return score;
+      return THREE.MathUtils.clamp((score - 0.004) * 2.4, 0, 1);
+    };
     expressionMeshesRef.current.forEach((mesh) => {
       if (!mesh.morphTargetDictionary || !mesh.morphTargetInfluences) return;
       Object.entries(values).forEach(([name, score]) => {
         const index = mesh.morphTargetDictionary?.[name];
-        if (index !== undefined) mesh.morphTargetInfluences![index] = score;
+        if (index !== undefined) mesh.morphTargetInfluences![index] = sensitiveMouthValue(name, score);
       });
     });
     if (jawRef.current) {
-      const openness = values.jawOpen ?? 0;
-      jawRef.current.bone.quaternion.copy(jawRef.current.rest).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(openness * 0.38, 0, 0)));
+      const openness = sensitiveMouthValue("jawOpen", values.jawOpen ?? 0);
+      jawRef.current.bone.quaternion.copy(jawRef.current.rest).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(openness * 0.6, 0, 0)));
     }
   }
 
