@@ -150,7 +150,12 @@ if (head) {
     eye.add(pupil);
   }
   featureAtWorld("Face_Nose", new THREE.Vector3(0, 16.88, 0.72), new THREE.Vector3(0.17, 0.28, 0.24), grey);
-  featureAtWorld("Face_Mouth", new THREE.Vector3(0, 16.52, 0.72), new THREE.Vector3(0.32, 0.065, 0.055), black);
+  const mouth = featureAtWorld("Face_Mouth", new THREE.Vector3(0, 16.52, 0.72), new THREE.Vector3(0.32, 0.065, 0.055), black);
+  const jaw = byName.get("lowerJaw_09");
+  if (jaw && mouth) {
+    scene.updateMatrixWorld(true);
+    jaw.attach(mouth);
+  }
 }
 
 // Keep the complete hierarchy encoded as a glTF skin, even though the visible
