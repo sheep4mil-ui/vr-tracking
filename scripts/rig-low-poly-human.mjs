@@ -115,6 +115,35 @@ function segmentProjection(point, segment) {
   return { amount, distance: point.distanceToSquared(nearest) };
 }
 
+// The supplied mesh's arm and hand topology does not deform coherently even
+// after fitting its pivots. Remove faces belonging to the two arm chains and
+// replace them below with stable, bone-rigid low-poly pieces.
+const unindexed = geometry.index ? geometry.toNonIndexed() : geometry;
+const unindexedPositions = unindexed.getAttribute("position");
+const keptVertices = [];
+for (let triangle = 0; triangle + 2 < unindexedPositions.count; triangle += 3) {
+  const center = new THREE.Vector3();
+  for (let corner = 0; corner < 3; corner++) center.add(new THREE.Vector3().fromBufferAttribute(unindexedPositions, triangle + corner));
+  center.multiplyScalar(1 / 3);
+  const nearest = segments
+    .map((segment) => ({ segment, ...segmentProjection(center, segment) }))
+    .sort((a, b) => a.distance - b.distance)[0];
+  if (!nearest.segment.isArm) keptVertices.push(triangle, triangle + 1, triangle + 2);
+}
+const bodyGeometry = new THREE.BufferGeometry();
+for (const name of Object.keys(unindexed.attributes)) {
+  const attribute = unindexed.getAttribute(name);
+  const values = [];
+  for (const vertex of keptVertices) {
+    for (let component = 0; component < attribute.itemSize; component++) values.push(attribute.getComponent(vertex, component));
+  }
+  const TypedArray = attribute.array.constructor;
+  bodyGeometry.setAttribute(name, new THREE.BufferAttribute(new TypedArray(values), attribute.itemSize, attribute.normalized));
+}
+geometry = bodyGeometry;
+geometry.computeVertexNormals();
+geometry.computeBoundingBox();
+
 const positions = geometry.getAttribute("position");
 const skinIndices = new Uint16Array(positions.count * 4);
 const skinWeights = new Float32Array(positions.count * 4);
@@ -163,7 +192,53 @@ character.name = "LowPolyHuman_Skinned";
 character.castShadow = true;
 character.receiveShadow = true;
 rigScene.add(character);
-character.bind(new THREE.Skeleton(bones));
+const skeleton = new THREE.Skeleton(bones);
+character.bind(skeleton);
+
+function addRigidArmPart(partGeometry, boneName, name) {
+  const boneIndex = bones.indexOf(boneByName.get(boneName));
+  const count = partGeometry.getAttribute("position").count;
+  const indices = new Uint16Array(count * 4);
+  const weights = new Float32Array(count * 4);
+  for (let vertex = 0; vertex < count; vertex++) {
+    indices[vertex * 4] = boneIndex;
+    weights[vertex * 4] = 1;
+  }
+  partGeometry.setAttribute("skinIndex", new THREE.Uint16BufferAttribute(indices, 4));
+  partGeometry.setAttribute("skinWeight", new THREE.Float32BufferAttribute(weights, 4));
+  const part = new THREE.SkinnedMesh(partGeometry, Array.isArray(material) ? material[0] : material);
+  part.name = name;
+  part.castShadow = true;
+  part.receiveShadow = true;
+  rigScene.add(part);
+  part.bind(skeleton);
+}
+
+function armPiece(startName, endName, radiusStart, radiusEnd, name) {
+  const start = boneByName.get(startName).getWorldPosition(new THREE.Vector3());
+  const end = boneByName.get(endName).getWorldPosition(new THREE.Vector3());
+  const direction = end.clone().sub(start);
+  const piece = new THREE.CylinderGeometry(radiusEnd, radiusStart, direction.length(), 6, 2, false);
+  const transform = new THREE.Matrix4().compose(
+    start.clone().add(end).multiplyScalar(0.5),
+    new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.clone().normalize()),
+    new THREE.Vector3(1, 1, 1),
+  );
+  piece.applyMatrix4(transform);
+  piece.computeVertexNormals();
+  addRigidArmPart(piece, startName, name);
+}
+
+for (const [prefix, suffixes] of [["r", ["018", "019", "020"]], ["l", ["042", "043", "044"]]]) {
+  const shoulder = `${prefix}Shldr_${suffixes[0]}`;
+  const forearm = `${prefix}ForeArm_${suffixes[1]}`;
+  const hand = `${prefix}Hand_${suffixes[2]}`;
+  armPiece(shoulder, forearm, 0.46, 0.36, `${prefix}_UpperArm_Stable`);
+  armPiece(forearm, hand, 0.34, 0.27, `${prefix}_ForeArm_Stable`);
+  const handPosition = boneByName.get(hand).getWorldPosition(new THREE.Vector3());
+  const handGeometry = new THREE.DodecahedronGeometry(0.38, 0).scale(0.72, 1.15, 0.55).translate(handPosition.x, handPosition.y - 0.22, handPosition.z);
+  addRigidArmPart(handGeometry, hand, `${prefix}_Hand_Stable`);
+}
 
 function addAnchor(parentName, name, offset = new THREE.Vector3()) {
   const parent = boneByName.get(parentName);
