@@ -12,6 +12,7 @@ type BoneDriver = {
   bone: THREE.Bone;
   semantic: string;
   restDirection: THREE.Vector3;
+  restReference: THREE.Vector3;
   restLocalQuaternion: THREE.Quaternion;
   restWorldQuaternion: THREE.Quaternion;
 };
@@ -317,6 +318,23 @@ export default function MotionStudio() {
     const side = handedness.toLowerCase().startsWith("left") ? "l" : "r";
     const p = raw.map((point) => new THREE.Vector3(-Number(point[0]), -Number(point[1]), -Number(point[2])));
     const fingerStarts: Record<string, number> = { Thumb: 1, Index: 5, Middle: 9, Ring: 13, Pinky: 17 };
+    const wristDriver = [...rigRef.current.values()].find((driver) => driver.semantic === `${side}Hand`);
+    if (wristDriver) {
+      const forward = p[9].clone().sub(p[0]).normalize();
+      const across = side === "l" ? p[5].clone().sub(p[17]).normalize() : p[17].clone().sub(p[5]).normalize();
+      const firstDelta = new THREE.Quaternion().setFromUnitVectors(wristDriver.restDirection, forward);
+      const rotatedReference = wristDriver.restReference.clone().applyQuaternion(firstDelta);
+      const projectedReference = rotatedReference.sub(forward.clone().multiplyScalar(rotatedReference.dot(forward))).normalize();
+      const projectedAcross = across.sub(forward.clone().multiplyScalar(across.dot(forward))).normalize();
+      if (projectedReference.lengthSq() > 0.01 && projectedAcross.lengthSq() > 0.01) {
+        const rollDelta = new THREE.Quaternion().setFromUnitVectors(projectedReference, projectedAcross);
+        const desiredWorld = rollDelta.multiply(firstDelta).multiply(wristDriver.restWorldQuaternion);
+        const parentWorld = new THREE.Quaternion();
+        wristDriver.bone.parent?.getWorldQuaternion(parentWorld);
+        wristDriver.bone.quaternion.copy(parentWorld.invert().multiply(desiredWorld));
+        wristDriver.bone.updateMatrixWorld(true);
+      }
+    }
     for (const driver of rigRef.current.values()) {
       if (!driver.semantic.startsWith(side) || !/Thumb|Index|Middle|Ring|Pinky/.test(driver.semantic)) continue;
       const match = driver.semantic.match(/^[lr](Thumb|Index|Middle|Ring|Pinky)([0-3])$/);
@@ -421,6 +439,7 @@ export default function MotionStudio() {
         bone: node,
         semantic,
         restDirection: end.sub(start).normalize(),
+        restReference: new THREE.Vector3(1, 0, 0).applyQuaternion(node.getWorldQuaternion(new THREE.Quaternion())).normalize(),
         restLocalQuaternion: node.quaternion.clone(),
         restWorldQuaternion: node.getWorldQuaternion(new THREE.Quaternion()),
       });
@@ -502,7 +521,10 @@ export default function MotionStudio() {
             const hands = handLandmarkerRef.current.detectForVideo(video, timestamp);
             const face = faceLandmarkerRef.current.detectForVideo(video, timestamp);
             const handPoints = hands.worldLandmarks.map((hand) => hand.map((point) => [point.x, point.y, point.z]));
-            const handedness = hands.handedness.map((categories) => categories[0]?.categoryName ?? "Left");
+            const handedness = hands.handedness.map((categories) => {
+              const detected = categories[0]?.categoryName ?? "Left";
+              return detected === "Left" ? "Right" : "Left";
+            });
             const faceValues = Object.fromEntries((face.faceBlendshapes[0]?.categories ?? []).map((category) => [category.categoryName, category.score]));
             latestDetailRef.current = { hands: handPoints, handedness, face: faceValues };
             overlayDetailRef.current = {
