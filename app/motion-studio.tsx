@@ -544,14 +544,25 @@ export default function MotionStudio() {
     const scene = sceneRef.current;
     if (!scene) return;
     if (modelRef.current) scene.remove(modelRef.current);
-    if (fileName.toLowerCase().includes("miles")) model.rotation.y -= Math.PI / 2;
+    const lowerFileName = fileName.toLowerCase();
+    if (lowerFileName.includes("miles")) model.rotation.y -= Math.PI / 2;
+    const modelBounds = () => {
+      if (!lowerFileName.includes("lucario")) return new THREE.Box3().setFromObject(model);
+      const boneBounds = new THREE.Box3();
+      model.traverse((node) => {
+        if (node instanceof THREE.Bone || (node as THREE.Bone).isBone) {
+          boneBounds.expandByPoint(node.getWorldPosition(new THREE.Vector3()));
+        }
+      });
+      return boneBounds.isEmpty() ? new THREE.Box3().setFromObject(model) : boneBounds;
+    };
     model.updateMatrixWorld(true);
-    const box = new THREE.Box3().setFromObject(model);
+    const box = modelBounds();
     const size = box.getSize(new THREE.Vector3());
     const scale = 4.2 / Math.max(size.y, 0.01);
     model.scale.multiplyScalar(scale);
     model.updateMatrixWorld(true);
-    const normalized = new THREE.Box3().setFromObject(model);
+    const normalized = modelBounds();
     const center = normalized.getCenter(new THREE.Vector3());
     model.position.add(new THREE.Vector3(-center.x, -2.38 - normalized.min.y, -0.65 - center.z));
     model.traverse((node) => {
