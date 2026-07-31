@@ -48,6 +48,7 @@ export default function MotionStudio() {
   const jointsRef = useRef<THREE.Mesh[]>([]);
   const bonesRef = useRef<THREE.Line[]>([]);
   const modelRef = useRef<THREE.Object3D | null>(null);
+  const rigidHandModelRef = useRef(false);
   const rigRef = useRef<Map<string, BoneDriver>>(new Map());
   const sceneRef = useRef<THREE.Scene | null>(null);
   const [state, setState] = useState<TrackerState>("idle");
@@ -298,8 +299,8 @@ export default function MotionStudio() {
       chest: [hip.clone().lerp(shoulders, 0.48), shoulders],
       neck: [shoulders, p[0]],
       head: [shoulders.clone().lerp(p[0], 0.65), p[0]],
-      rCollar: [shoulders, p[right.shoulder]], rShldr: [p[rightArm.shoulder], p[rightArm.elbow]], rForeArm: [p[rightArm.elbow], p[rightArm.wrist]], rHand: [p[right.wrist], hand(...right.hand as [number, number, number])],
-      lCollar: [shoulders, p[left.shoulder]], lShldr: [p[leftArm.shoulder], p[leftArm.elbow]], lForeArm: [p[leftArm.elbow], p[leftArm.wrist]], lHand: [p[left.wrist], hand(...left.hand as [number, number, number])],
+      rCollar: [shoulders, p[right.shoulder]], rShldr: [p[rightArm.shoulder], p[rightArm.elbow]], rForeArm: [p[rightArm.elbow], p[rightArm.wrist]], rHand: [p[rightArm.wrist], hand(...rightArm.hand as [number, number, number])],
+      lCollar: [shoulders, p[left.shoulder]], lShldr: [p[leftArm.shoulder], p[leftArm.elbow]], lForeArm: [p[leftArm.elbow], p[leftArm.wrist]], lHand: [p[leftArm.wrist], hand(...leftArm.hand as [number, number, number])],
       rThigh: [p[rightLeg.hip], p[rightLeg.knee]], rShin: [p[rightLeg.knee], p[rightLeg.ankle]], rFoot: [p[rightLeg.ankle], p[rightLeg.foot]],
       lThigh: [p[leftLeg.hip], p[leftLeg.knee]], lShin: [p[leftLeg.knee], p[leftLeg.ankle]], lFoot: [p[leftLeg.ankle], p[leftLeg.foot]],
     };
@@ -359,6 +360,9 @@ export default function MotionStudio() {
   }
 
   function driveHand(handedness: string, raw: number[][]) {
+    // This static low-poly source has no independently skinned finger topology.
+    // Let the body-pose hand bone carry the complete hand as a rigid unit.
+    if (rigidHandModelRef.current) return;
     if (raw.length < 21) return;
     const side = handedness.toLowerCase().startsWith("left") ? "l" : "r";
     const activePose = activeJoyPoseRef.current[side];
@@ -568,6 +572,7 @@ export default function MotionStudio() {
     if (!scene) return;
     if (modelRef.current) scene.remove(modelRef.current);
     const lowerFileName = fileName.toLowerCase();
+    rigidHandModelRef.current = lowerFileName.includes("dnd_low_poly_human_rigged");
     if (lowerFileName.includes("miles")) model.rotation.y -= Math.PI / 2;
     const modelBounds = () => {
       if (!lowerFileName.includes("lucario")) return new THREE.Box3().setFromObject(model);
