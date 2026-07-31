@@ -47,6 +47,7 @@ const grey = new THREE.MeshStandardMaterial({
 });
 const white = new THREE.MeshStandardMaterial({ name: "Eye_White", color: 0xf5f5f2, roughness: 0.7 });
 const black = new THREE.MeshStandardMaterial({ name: "Pupil_and_Mouth", color: 0x111318, roughness: 0.8 });
+const lipGrey = new THREE.MeshStandardMaterial({ name: "Mouth_Lips", color: 0x666c73, roughness: 0.88 });
 const jointGeometry = new THREE.SphereGeometry(0.22, 14, 10);
 const limbGeometry = new THREE.CylinderGeometry(0.16, 0.16, 1, 12);
 const bodyGeometry = new THREE.SphereGeometry(1, 20, 14);
@@ -105,6 +106,15 @@ const segments = [
 ];
 for (const segment of segments) addSegment(...segment);
 
+// Build visible articulated fingers directly from the proven finger chains.
+for (const bone of bones) {
+  if (!/^[rl](Thumb|Index|Mid|Ring|Pinky)[123]_/i.test(bone.name)) continue;
+  const child = bone.children.find((node) => node.isBone && /^[rl](Thumb|Index|Mid|Ring|Pinky)[123]_/i.test(node.name));
+  if (!child) continue;
+  addSegment(bone.name, child.name, /Thumb/i.test(bone.name) ? 0.105 : 0.085);
+  addJoint(bone.name, /Thumb/i.test(bone.name) ? 0.105 : 0.085);
+}
+
 for (const name of [
   "hip_02", "abdomen_03", "chest_04", "neck_05",
   "rShldr_018", "rForeArm_019", "rHand_020",
@@ -129,14 +139,43 @@ function addBodyShape(boneName, name, scale, position = new THREE.Vector3(), mat
 
 // Broad, overlapping forms make a neutral human-proportioned mannequin while
 // leaving each piece rigidly attached to the proven tracking hierarchy.
-addBodyShape("hip_02", "Body_Pelvis", new THREE.Vector3(1.28, 0.86, 0.62), new THREE.Vector3(0, 0.32, 0));
-addBodyShape("abdomen_03", "Body_Abdomen", new THREE.Vector3(1.08, 1.05, 0.58), new THREE.Vector3(0, 0.55, 0));
-addBodyShape("chest_04", "Body_Chest", new THREE.Vector3(1.52, 1.28, 0.7), new THREE.Vector3(0, 0.22, 0));
-addBodyShape("head_06", "Body_Head", new THREE.Vector3(0.82, 1.05, 0.82), new THREE.Vector3(0, 0.52, 0));
-addBodyShape("rHand_020", "Body_RightHand", new THREE.Vector3(0.38, 0.62, 0.23));
-addBodyShape("lHand_044", "Body_LeftHand", new THREE.Vector3(0.38, 0.62, 0.23));
-addBodyShape("rFoot_085", "Body_RightFoot", new THREE.Vector3(0.42, 0.34, 0.75), new THREE.Vector3(0, 0, 0.34));
-addBodyShape("lFoot_0102", "Body_LeftFoot", new THREE.Vector3(0.42, 0.34, 0.75), new THREE.Vector3(0, 0, 0.34));
+addBodyShape("hip_02", "Body_Pelvis", new THREE.Vector3(1.3, 0.88, 0.82), new THREE.Vector3(0, 0.3, 0));
+addBodyShape("abdomen_03", "Body_Waist", new THREE.Vector3(1.02, 1.08, 0.72), new THREE.Vector3(0, 0.5, 0));
+addBodyShape("chest_04", "Body_Ribcage", new THREE.Vector3(1.62, 1.42, 0.94), new THREE.Vector3(0, 0.18, 0));
+addBodyShape("chest_04", "Body_RightPectoral", new THREE.Vector3(0.78, 0.48, 0.32), new THREE.Vector3(-0.62, 0.48, 0.78));
+addBodyShape("chest_04", "Body_LeftPectoral", new THREE.Vector3(0.78, 0.48, 0.32), new THREE.Vector3(0.62, 0.48, 0.78));
+addBodyShape("rShldr_018", "Body_RightDeltoid", new THREE.Vector3(0.58, 0.62, 0.58));
+addBodyShape("lShldr_042", "Body_LeftDeltoid", new THREE.Vector3(0.58, 0.62, 0.58));
+addBodyShape("abdomen_03", "Body_UpperCore", new THREE.Vector3(0.62, 0.34, 0.25), new THREE.Vector3(0, 0.55, 0.66));
+addBodyShape("abdomen_03", "Body_MiddleCore", new THREE.Vector3(0.57, 0.3, 0.24), new THREE.Vector3(0, 0.08, 0.64));
+addBodyShape("hip_02", "Body_LowerCore", new THREE.Vector3(0.6, 0.3, 0.23), new THREE.Vector3(0, 0.76, 0.66));
+addBodyShape("head_06", "Body_Head", new THREE.Vector3(0.82, 1.05, 0.88), new THREE.Vector3(0, 0.52, 0));
+addBodyShape("rHand_020", "Body_RightPalm", new THREE.Vector3(0.4, 0.58, 0.28));
+addBodyShape("lHand_044", "Body_LeftPalm", new THREE.Vector3(0.4, 0.58, 0.28));
+addBodyShape("rFoot_085", "Body_RightFoot", new THREE.Vector3(0.46, 0.36, 0.82), new THREE.Vector3(0, 0, 0.38));
+addBodyShape("lFoot_0102", "Body_LeftFoot", new THREE.Vector3(0.46, 0.36, 0.82), new THREE.Vector3(0, 0, 0.38));
+
+function addAnchor(parentName, name, worldOffset = new THREE.Vector3()) {
+  const parent = byName.get(parentName);
+  if (!parent) return;
+  scene.updateMatrixWorld(true);
+  const anchor = new THREE.Object3D();
+  anchor.name = name;
+  anchor.position.copy(parent.getWorldPosition(new THREE.Vector3())).add(worldOffset);
+  scene.add(anchor);
+  scene.updateMatrixWorld(true);
+  parent.attach(anchor);
+  return anchor;
+}
+
+const itemSocket = addAnchor("rHand_020", "RightHand_ItemSocket", new THREE.Vector3(0, -0.12, 0.28));
+if (itemSocket) {
+  const grip = new THREE.Object3D();
+  grip.name = "RightHand_GripPoint";
+  itemSocket.add(grip);
+}
+addAnchor("rHand_020", "RightHand_Collider");
+addAnchor("lHand_044", "LeftHand_Collider");
 
 const head = byName.get("head_06");
 if (head) {
@@ -162,8 +201,10 @@ if (head) {
     pupil.scale.set(0.34, 0.34, 0.24);
     eye.add(pupil);
   }
-  featureAtWorld("Face_Nose", new THREE.Vector3(0, 16.88, 0.72), new THREE.Vector3(0.17, 0.28, 0.24), grey);
-  const mouth = featureAtWorld("Face_Mouth", new THREE.Vector3(0, 16.52, 0.72), new THREE.Vector3(0.32, 0.065, 0.055), black);
+  featureAtWorld("Face_Nose", new THREE.Vector3(0, 16.88, 0.78), new THREE.Vector3(0.18, 0.3, 0.28), grey);
+  featureAtWorld("Face_MouthInterior", new THREE.Vector3(0, 16.53, 0.805), new THREE.Vector3(0.36, 0.16, 0.06), black);
+  featureAtWorld("Face_UpperLip", new THREE.Vector3(0, 16.59, 0.865), new THREE.Vector3(0.36, 0.07, 0.055), lipGrey);
+  const mouth = featureAtWorld("Face_LowerLip", new THREE.Vector3(0, 16.48, 0.865), new THREE.Vector3(0.34, 0.075, 0.055), lipGrey);
   const jaw = byName.get("lowerJaw_09");
   if (jaw && mouth) {
     scene.updateMatrixWorld(true);

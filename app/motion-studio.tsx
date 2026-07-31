@@ -57,10 +57,12 @@ export default function MotionStudio() {
   const timingRef = useRef({ last: performance.now(), frames: 0 });
   const peerRef = useRef<Peer | null>(null);
   const connectionsRef = useRef<DataConnection[]>([]);
+  const godotSocketRef = useRef<WebSocket | null>(null);
   const lastBroadcastRef = useRef(0);
   const [mode, setMode] = useState<DeviceMode>("phone");
   const [pairCode, setPairCode] = useState("");
   const [connectionState, setConnectionState] = useState("Not connected");
+  const [godotState, setGodotState] = useState("Godot not connected");
   const joyDevicesRef = useRef<JoyDevice[]>([]);
   const activeJoyPoseRef = useRef<Record<"l" | "r", HandPose>>({ l: "camera", r: "camera" });
   const [joyStatus, setJoyStatus] = useState("Joy-Cons not connected");
@@ -70,6 +72,9 @@ export default function MotionStudio() {
   const swapArmsRef = useRef(true);
   const [upperBodyOnly, setUpperBodyOnly] = useState(false);
   const upperBodyOnlyRef = useRef(false);
+  const [handLatchEnabled, setHandLatchEnabled] = useState(true);
+  const handLatchEnabledRef = useRef(true);
+  const handsLatchedRef = useRef(false);
   const smoothedPointsRef = useRef<THREE.Vector3[]>([]);
   const expressionMeshesRef = useRef<THREE.Mesh[]>([]);
   const jawRef = useRef<{ bone: THREE.Bone; rest: THREE.Quaternion } | null>(null);
@@ -140,6 +145,7 @@ export default function MotionStudio() {
       renderer.dispose();
       mount.removeChild(renderer.domElement);
       peerRef.current?.destroy();
+      godotSocketRef.current?.close();
     };
   }, []);
 
@@ -178,6 +184,7 @@ export default function MotionStudio() {
     const peer = new Peer();
     peerRef.current = peer;
     peer.on("open", () => {
+      connectToGodot();
       const connection = peer.connect(`motion-mirror-${cleanCode}`, { reliable: false });
       connectionsRef.current = [connection];
       connection.on("open", () => setConnectionState("Receiving live motion"));
@@ -190,11 +197,28 @@ export default function MotionStudio() {
         updateRig(landmarks);
         (packet.hands ?? []).forEach((hand, index) => driveHand(packet.handedness?.[index] ?? "Left", hand));
         updateFace(packet.face ?? {});
+        if (godotSocketRef.current?.readyState === WebSocket.OPEN) {
+          godotSocketRef.current.send(JSON.stringify({ ...packet, handsLatched: handsLatchedRef.current }));
+        }
       });
       connection.on("close", () => setConnectionState("Phone disconnected"));
       connection.on("error", () => setConnectionState("Connection failed"));
     });
     peer.on("error", () => setConnectionState("Could not find that phone"));
+  }
+
+  function connectToGodot() {
+    godotSocketRef.current?.close();
+    setGodotState("Connecting to Godot…");
+    try {
+      const socket = new WebSocket("ws://127.0.0.1:8765");
+      godotSocketRef.current = socket;
+      socket.addEventListener("open", () => setGodotState("Godot connected"));
+      socket.addEventListener("close", () => setGodotState("Godot not connected"));
+      socket.addEventListener("error", () => setGodotState("Start the Godot game, then reconnect"));
+    } catch {
+      setGodotState("Godot bridge unavailable");
+    }
   }
 
   function drawOverlay(landmarks: NormalizedLandmark[]) {
@@ -242,6 +266,16 @@ export default function MotionStudio() {
 
   function updateRig(world: NormalizedLandmark[]) {
     if (!world.length) return;
+    const metricPoints = world.map((p) => new THREE.Vector3(-p.x, -p.y, -p.z));
+    const palmCenter = (indices: number[]) => indices
+      .reduce((sum, index) => sum.add(metricPoints[index]), new THREE.Vector3())
+      .multiplyScalar(1 / indices.length);
+    const leftPalm = palmCenter([15, 17, 19, 21]);
+    const rightPalm = palmCenter([16, 18, 20, 22]);
+    const palmDistance = leftPalm.distanceTo(rightPalm);
+    if (!handLatchEnabledRef.current) handsLatchedRef.current = false;
+    else if (!handsLatchedRef.current && palmDistance <= 0.04) handsLatchedRef.current = true;
+    else if (handsLatchedRef.current && palmDistance >= 0.09) handsLatchedRef.current = false;
     const rawPoints = world.map((p) => new THREE.Vector3(-p.x * 3.2, -p.y * 3.2, -p.z * 3.2));
     if (smoothedPointsRef.current.length !== rawPoints.length) {
       smoothedPointsRef.current = rawPoints.map((point) => point.clone());
@@ -249,6 +283,12 @@ export default function MotionStudio() {
       rawPoints.forEach((point, index) => smoothedPointsRef.current[index].lerp(point, 0.58));
     }
     const points = smoothedPointsRef.current.map((point) => point.clone());
+    if (handsLatchedRef.current) {
+      const sharedPalm = [15, 17, 19, 21, 16, 18, 20, 22]
+        .reduce((sum, index) => sum.add(points[index]), new THREE.Vector3())
+        .multiplyScalar(1 / 8);
+      for (const index of [15, 17, 19, 21, 16, 18, 20, 22]) points[index].copy(sharedPalm);
+    }
     const hip = points[23].clone().add(points[24]).multiplyScalar(0.5);
     const center = new THREE.Vector3(0, 0.15, 0).sub(hip);
     points.forEach((p, i) => jointsRef.current[i]?.position.copy(p.add(center)));
@@ -820,9 +860,25 @@ export default function MotionStudio() {
             }}
           >
             <option value="./models/male_skeleton.glb">Male skeleton</option>
+            <option value="./models/dnd_grey_stick_rig.glb">D&amp;D Spartan base</option>
             <option value="./models/spiderverse_miles.glb">Spider-Verse Miles</option>
             <option value="./models/lucario_thicc.glb">Lucario</option>
           </select>
+          <label className="calibration-toggle">
+            <input
+              type="checkbox"
+              checked={handLatchEnabled}
+              onChange={(event) => {
+                setHandLatchEnabled(event.target.checked);
+                handLatchEnabledRef.current = event.target.checked;
+                if (!event.target.checked) handsLatchedRef.current = false;
+              }}
+            />
+            4 cm hand latch
+          </label>
+          {mode === "computer" && (
+            <button className="secondary" onClick={connectToGodot}>{godotState}</button>
+          )}
           <label className="calibration-toggle">
             <input
               type="checkbox"
