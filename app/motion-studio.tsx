@@ -544,13 +544,16 @@ export default function MotionStudio() {
     const scene = sceneRef.current;
     if (!scene) return;
     if (modelRef.current) scene.remove(modelRef.current);
+    if (fileName.toLowerCase().includes("miles")) model.rotation.y -= Math.PI / 2;
+    model.updateMatrixWorld(true);
     const box = new THREE.Box3().setFromObject(model);
     const size = box.getSize(new THREE.Vector3());
     const scale = 4.2 / Math.max(size.y, 0.01);
-    model.scale.setScalar(scale);
+    model.scale.multiplyScalar(scale);
+    model.updateMatrixWorld(true);
     const normalized = new THREE.Box3().setFromObject(model);
     const center = normalized.getCenter(new THREE.Vector3());
-    model.position.set(-center.x, -2.38 - normalized.min.y, -0.65 - center.z);
+    model.position.add(new THREE.Vector3(-center.x, -2.38 - normalized.min.y, -0.65 - center.z));
     model.traverse((node) => {
       if (node instanceof THREE.Mesh) {
         node.castShadow = true;
@@ -569,15 +572,16 @@ export default function MotionStudio() {
       if (node instanceof THREE.Bone && /lowerjaw|(^|_)jaw/i.test(node.name)) {
         jawRef.current = { bone: node, rest: node.quaternion.clone() };
       }
-      if (!(node instanceof THREE.Bone)) return;
+      if (!(node instanceof THREE.Bone) && !(node as THREE.Bone).isBone) return;
+      const boneNode = node as THREE.Bone;
       const semantic = classifyBone(node.name);
       if (!semantic) return;
-      const child = node.children.find((candidate) => candidate instanceof THREE.Bone) as THREE.Bone | undefined;
+      const child = node.children.find((candidate) => candidate instanceof THREE.Bone || (candidate as THREE.Bone).isBone) as THREE.Bone | undefined;
       if (!child) return;
       const start = node.getWorldPosition(new THREE.Vector3());
       const end = child.getWorldPosition(new THREE.Vector3());
       drivers.set(node.name, {
-        bone: node,
+        bone: boneNode,
         semantic,
         restDirection: end.sub(start).normalize(),
         restReference: new THREE.Vector3(1, 0, 0).applyQuaternion(node.getWorldQuaternion(new THREE.Quaternion())).normalize(),
@@ -832,8 +836,6 @@ export default function MotionStudio() {
             />
             Upper body only
           </label>
-          <button className="joy-button" onClick={connectJoyCons}>Connect Joy-Cons</button>
-          <div className="joy-status">{joyStatus} · Trigger = fist · Stick press = recenter</div>
           <label className="file-button">
             <input type="file" accept=".glb,model/gltf-binary" onChange={loadModel} />
             Load your .GLB model
