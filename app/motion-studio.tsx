@@ -8,6 +8,8 @@ import Peer, { type DataConnection } from "peerjs";
 
 type TrackerState = "idle" | "loading" | "ready" | "tracking" | "error";
 type DeviceMode = "phone" | "computer";
+type HandPose = "camera" | "open" | "fist" | "point" | "pinch" | "thumb";
+type JoyDevice = { device: HIDDevice; side: "l" | "r"; orientation: THREE.Quaternion; lastTime: number };
 type BoneDriver = {
   bone: THREE.Bone;
   semantic: string;
@@ -52,6 +54,8 @@ export default function MotionStudio() {
   const [mode, setMode] = useState<DeviceMode>("phone");
   const [pairCode, setPairCode] = useState("");
   const [connectionState, setConnectionState] = useState("Not connected");
+  const joyDevicesRef = useRef<JoyDevice[]>([]);
+  const [joyStatus, setJoyStatus] = useState("Joy-Cons not connected");
   const [swapSides, setSwapSides] = useState(true);
   const swapSidesRef = useRef(true);
   const [swapArms, setSwapArms] = useState(true);
@@ -368,6 +372,92 @@ export default function MotionStudio() {
     if (jawRef.current) {
       const openness = values.jawOpen ?? 0;
       jawRef.current.bone.quaternion.copy(jawRef.current.rest).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(openness * 0.38, 0, 0)));
+    }
+  }
+
+  function applyHandPose(side: "l" | "r", pose: HandPose) {
+    const curls: Record<string, number> = {
+      Thumb: pose === "open" || pose === "thumb" ? 0 : pose === "pinch" ? 0.6 : 0.9,
+      Index: pose === "open" || pose === "point" ? 0 : pose === "pinch" ? 0.75 : 1.15,
+      Middle: pose === "open" ? 0 : pose === "pinch" ? 0.35 : 1.15,
+      Ring: pose === "open" ? 0 : pose === "pinch" ? 0.35 : 1.2,
+      Pinky: pose === "open" ? 0 : pose === "pinch" ? 0.35 : 1.2,
+    };
+    for (const driver of rigRef.current.values()) {
+      const match = driver.semantic.match(new RegExp(`^${side}(Thumb|Index|Middle|Ring|Pinky)([0-3])$`));
+      if (!match) continue;
+      const amount = curls[match[1]] * (Number(match[2]) === 0 ? 0.35 : 1);
+      driver.bone.quaternion.copy(driver.restLocalQuaternion).multiply(
+        new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), amount * (side === "l" ? 1 : -1))
+      );
+      driver.bone.updateMatrixWorld(true);
+    }
+  }
+
+  function handleJoyReport(joy: JoyDevice, event: HIDInputReportEvent) {
+    const data = event.data;
+    const now = performance.now();
+    const dt = Math.min((now - joy.lastTime) / 1000, 0.05);
+    joy.lastTime = now;
+    if (event.reportId !== 0x30 || data.byteLength < 24) return;
+    const gx = data.getInt16(18, true) * 0.0010653;
+    const gy = data.getInt16(20, true) * 0.0010653;
+    const gz = data.getInt16(22, true) * 0.0010653;
+    const speed = Math.hypot(gx, gy, gz);
+    if (speed > 0.035) {
+      joy.orientation.multiply(
+        new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(gx, gy, gz).normalize(), speed * dt)
+      ).normalize();
+    }
+    const shared = data.getUint8(3);
+    if (shared & (joy.side === "r" ? 0x04 : 0x08)) joy.orientation.identity();
+    const wrist = [...rigRef.current.values()].find((driver) => driver.semantic === `${joy.side}Hand`);
+    if (wrist) {
+      wrist.bone.quaternion.copy(wrist.restLocalQuaternion).multiply(joy.orientation);
+      wrist.bone.updateMatrixWorld(true);
+    }
+    const buttons = data.getUint8(joy.side === "r" ? 2 : 4);
+    const triggerPressed = Boolean(buttons & 0x80);
+    if (triggerPressed) {
+      applyHandPose(joy.side, "fist");
+      return;
+    }
+    const pose: HandPose = joy.side === "r"
+      ? buttons & 0x08 ? "open" : buttons & 0x04 ? "fist" : buttons & 0x02 ? "point" : buttons & 0x01 ? "pinch" : buttons & 0x40 ? "thumb" : "camera"
+      : buttons & 0x02 ? "open" : buttons & 0x01 ? "fist" : buttons & 0x04 ? "point" : buttons & 0x08 ? "pinch" : buttons & 0x40 ? "thumb" : "camera";
+    if (pose !== "camera") applyHandPose(joy.side, pose);
+  }
+
+  async function connectJoyCons() {
+    if (!("hid" in navigator)) {
+      setJoyStatus("Use desktop Chrome or Edge for Joy-Cons");
+      return;
+    }
+    try {
+      const devices = await navigator.hid.requestDevice({
+        filters: [
+          { vendorId: 0x057e, productId: 0x2006 },
+          { vendorId: 0x057e, productId: 0x2007 },
+        ],
+      });
+      const connected: JoyDevice[] = [];
+      for (const device of devices) {
+        if (!device.opened) await device.open();
+        const joy: JoyDevice = {
+          device,
+          side: device.productId === 0x2006 ? "l" : "r",
+          orientation: new THREE.Quaternion(),
+          lastTime: performance.now(),
+        };
+        device.addEventListener("inputreport", (event) => handleJoyReport(joy, event as HIDInputReportEvent));
+        connected.push(joy);
+      }
+      joyDevicesRef.current = connected;
+      setJoyStatus(connected.length
+        ? `${connected.map((joy) => joy.side === "l" ? "Left" : "Right").join(" + ")} Joy-Con connected`
+        : "No Joy-Con selected");
+    } catch {
+      setJoyStatus("Joy-Con connection cancelled");
     }
   }
 
@@ -695,6 +785,8 @@ export default function MotionStudio() {
             />
             Upper body only
           </label>
+          <button className="joy-button" onClick={connectJoyCons}>Connect Joy-Cons</button>
+          <div className="joy-status">{joyStatus} · Trigger = fist · Stick press = recenter</div>
           <label className="file-button">
             <input type="file" accept=".glb,model/gltf-binary" onChange={loadModel} />
             Load your .GLB model

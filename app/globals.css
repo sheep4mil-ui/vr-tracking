@@ -45,6 +45,8 @@ button,.file-button { min-height:44px; display:inline-flex; justify-content:cent
 .model-select { margin-top:13px; min-height:44px; border-radius:9px; border:1px solid var(--line); padding:0 13px; color:var(--ink); background:#111b2b; }
 .calibration-toggle { display:flex; align-items:center; gap:9px; min-height:38px; color:var(--muted); font-size:12px; cursor:pointer; }
 .calibration-toggle input { accent-color:var(--mint); width:16px; height:16px; }
+.joy-button { min-height:40px; color:#07130f; background:#ffd66e; border-color:#ffd66e; }
+.joy-status { margin:7px 2px 2px; color:var(--muted); font-size:11px; }
 .primary { background:var(--mint); color:#04120f; border-color:var(--mint); }
 .secondary,.file-button { color:var(--ink); background:#111b2b; }
 button:disabled { opacity:.55; cursor:wait; }
