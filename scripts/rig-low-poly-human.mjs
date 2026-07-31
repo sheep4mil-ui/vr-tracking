@@ -220,6 +220,11 @@ for (const [prefix, suffixes] of [["r", ["018", "019", "020"]], ["l", ["042", "0
   const shoulder = `${prefix}Shldr_${suffixes[0]}`;
   const forearm = `${prefix}ForeArm_${suffixes[1]}`;
   const hand = `${prefix}Hand_${suffixes[2]}`;
+  const shoulderPosition = boneByName.get(shoulder).getWorldPosition(new THREE.Vector3());
+  const shoulderGeometry = new THREE.DodecahedronGeometry(0.58, 0)
+    .scale(1.18, 0.82, 0.82)
+    .translate(shoulderPosition.x, shoulderPosition.y, shoulderPosition.z);
+  addRigidArmPart(shoulderGeometry, shoulder, `${prefix}_ShoulderCap_Stable`);
   armPiece(shoulder, forearm, 0.46, 0.36, `${prefix}_UpperArm_Stable`);
   armPiece(forearm, hand, 0.34, 0.27, `${prefix}_ForeArm_Stable`);
   const handPosition = boneByName.get(hand).getWorldPosition(new THREE.Vector3());
