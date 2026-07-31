@@ -151,13 +151,18 @@ export default function MotionStudio() {
     return Math.random().toString(36).slice(2, 8).toUpperCase();
   }
 
+  function broadcastPeerId(code: string) {
+    const gameMode = new URLSearchParams(window.location.search).get("receiver") === "warformed";
+    return `${gameMode ? "warformed-motion" : "motion-mirror"}-${code.toLowerCase()}`;
+  }
+
   function beginBroadcastSession() {
     peerRef.current?.destroy();
     connectionsRef.current = [];
     const code = createPairCode();
     setPairCode(code);
     setConnectionState("Opening room…");
-    const peer = new Peer(`motion-mirror-${code.toLowerCase()}`);
+    const peer = new Peer(broadcastPeerId(code));
     peerRef.current = peer;
     peer.on("open", () => setConnectionState("Waiting for computer"));
     peer.on("connection", (connection) => {
@@ -737,6 +742,7 @@ export default function MotionStudio() {
             if (mode === "phone" && now - lastBroadcastRef.current >= 32) {
               const packet = {
                 pose: broadcastLandmarks.map((point) => [point.x, point.y, point.z, point.visibility ?? 1]),
+                handsLatched: handsLatchedRef.current,
                 ...latestDetailRef.current,
               };
               connectionsRef.current.forEach((connection) => {
