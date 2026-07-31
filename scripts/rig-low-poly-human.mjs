@@ -43,8 +43,35 @@ rigScene.traverse((node) => {
   if (node.isMesh) oldMeshes.push(node);
   if (node.isBone) bones.push(node);
 });
-for (const mesh of oldMeshes) mesh.parent?.remove(mesh);
 const boneByName = new Map(bones.map((bone) => [bone.name, bone]));
+
+// Capture the proven male-mesh skinning before removing its visible geometry.
+// Bone proximity alone cannot tell where a shoulder or elbow surface should
+// bend; nearest-surface weight transfer preserves those authored joint zones.
+const referenceVertices = [];
+for (const mesh of oldMeshes) {
+  if (!mesh.isSkinnedMesh) continue;
+  const meshPositions = mesh.geometry.getAttribute("position");
+  const meshIndices = mesh.geometry.getAttribute("skinIndex");
+  const meshWeights = mesh.geometry.getAttribute("skinWeight");
+  if (!meshPositions || !meshIndices || !meshWeights) continue;
+  for (let vertex = 0; vertex < meshPositions.count; vertex++) {
+    const indices = [];
+    const weights = [];
+    for (let slot = 0; slot < 4; slot++) {
+      const sourceIndex = meshIndices.getComponent(vertex, slot);
+      const sourceBone = mesh.skeleton.bones[sourceIndex];
+      indices.push(sourceBone ? bones.indexOf(boneByName.get(sourceBone.name)) : 0);
+      weights.push(meshWeights.getComponent(vertex, slot));
+    }
+    referenceVertices.push({
+      point: new THREE.Vector3().fromBufferAttribute(meshPositions, vertex).applyMatrix4(mesh.matrixWorld),
+      indices,
+      weights,
+    });
+  }
+}
+for (const mesh of oldMeshes) mesh.parent?.remove(mesh);
 
 const geometry = sourceMesh.geometry.clone();
 geometry.applyMatrix4(sourceMesh.matrixWorld);
@@ -64,44 +91,46 @@ geometry.applyMatrix4(normalize);
 geometry.computeVertexNormals();
 geometry.computeBoundingBox();
 
-const segments = [
-  ["hip_02", "abdomen_03"], ["abdomen_03", "chest_04"], ["chest_04", "neck_05"], ["neck_05", "head_06"],
-  ["rCollar_017", "rShldr_018"], ["rShldr_018", "rForeArm_019"], ["rForeArm_019", "rHand_020"],
-  ["lCollar_041", "lShldr_042"], ["lShldr_042", "lForeArm_043"], ["lForeArm_043", "lHand_044"],
-  ["rThigh_083", "rShin_084"], ["rShin_084", "rFoot_085"], ["rFoot_085", "rToe_086"],
-  ["lThigh_0100", "lShin_0101"], ["lShin_0101", "lFoot_0102"], ["lFoot_0102", "lToe_0103"],
-].map(([startName, endName]) => {
-  const startBone = boneByName.get(startName), endBone = boneByName.get(endName);
-  return {
-    boneIndex: bones.indexOf(startBone),
-    start: startBone.getWorldPosition(new THREE.Vector3()),
-    end: endBone.getWorldPosition(new THREE.Vector3()),
-  };
-});
-
-function distanceToSegment(point, start, end) {
-  const line = end.clone().sub(start);
-  const lengthSq = line.lengthSq();
-  const amount = lengthSq ? THREE.MathUtils.clamp(point.clone().sub(start).dot(line) / lengthSq, 0, 1) : 0;
-  return point.distanceTo(start.clone().addScaledVector(line, amount));
-}
-
 const positions = geometry.getAttribute("position");
 const skinIndices = new Uint16Array(positions.count * 4);
 const skinWeights = new Float32Array(positions.count * 4);
-
-// Use a single nearest anatomical segment per vertex. The earlier two-segment
-// blend allowed a torso vertex to inherit an arm bone (and vice versa), which
-// made whole limbs fold and stretch when tracking started. This low-poly mesh
-// benefits from firm, robot-like joint boundaries instead of cross-chain blends.
+const cellSize = 0.5;
+const referenceGrid = new Map();
+const cellKey = (x, y, z) => `${x},${y},${z}`;
+for (const reference of referenceVertices) {
+  const x = Math.floor(reference.point.x / cellSize);
+  const y = Math.floor(reference.point.y / cellSize);
+  const z = Math.floor(reference.point.z / cellSize);
+  const key = cellKey(x, y, z);
+  if (!referenceGrid.has(key)) referenceGrid.set(key, []);
+  referenceGrid.get(key).push(reference);
+}
 for (let vertex = 0; vertex < positions.count; vertex++) {
   const point = new THREE.Vector3().fromBufferAttribute(positions, vertex);
-  const nearest = segments
-    .map((segment) => ({ ...segment, distance: distanceToSegment(point, segment.start, segment.end) }))
-    .sort((a, b) => a.distance - b.distance)[0];
-  skinIndices[vertex * 4] = nearest.boneIndex;
-  skinWeights[vertex * 4] = 1;
+  const cx = Math.floor(point.x / cellSize), cy = Math.floor(point.y / cellSize), cz = Math.floor(point.z / cellSize);
+  let candidates = [];
+  for (let radius = 0; radius <= 8 && candidates.length === 0; radius++) {
+    for (let x = cx - radius; x <= cx + radius; x++) for (let y = cy - radius; y <= cy + radius; y++) {
+      for (let z = cz - radius; z <= cz + radius; z++) {
+        if (radius && Math.max(Math.abs(x - cx), Math.abs(y - cy), Math.abs(z - cz)) !== radius) continue;
+        candidates.push(...(referenceGrid.get(cellKey(x, y, z)) ?? []));
+      }
+    }
+  }
+  let nearest = candidates[0];
+  let nearestDistance = Infinity;
+  for (const candidate of candidates) {
+    const distance = point.distanceToSquared(candidate.point);
+    if (distance < nearestDistance) { nearest = candidate; nearestDistance = distance; }
+  }
+  if (!nearest) throw new Error(`No reference skin weights found for vertex ${vertex}.`);
+  const total = nearest.weights.reduce((sum, weight) => sum + weight, 0) || 1;
+  for (let slot = 0; slot < 4; slot++) {
+    skinIndices[vertex * 4 + slot] = nearest.indices[slot];
+    skinWeights[vertex * 4 + slot] = nearest.weights[slot] / total;
+  }
 }
+console.log(`Transferred skinning from ${referenceVertices.length} authored male-mesh vertices.`);
 geometry.setAttribute("skinIndex", new THREE.Uint16BufferAttribute(skinIndices, 4));
 geometry.setAttribute("skinWeight", new THREE.Float32BufferAttribute(skinWeights, 4));
 
