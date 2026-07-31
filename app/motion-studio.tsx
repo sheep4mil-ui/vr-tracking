@@ -247,15 +247,20 @@ export default function MotionStudio() {
   function updateRig(world: NormalizedLandmark[]) {
     if (!world.length) return;
     const metricPoints = world.map((p) => new THREE.Vector3(-p.x, -p.y, -p.z));
-    const palmCenter = (indices: number[]) => indices
-      .reduce((sum, index) => sum.add(metricPoints[index]), new THREE.Vector3())
-      .multiplyScalar(1 / indices.length);
-    const leftPalm = palmCenter([15, 17, 19, 21]);
-    const rightPalm = palmCenter([16, 18, 20, 22]);
-    const palmDistance = leftPalm.distanceTo(rightPalm);
+    // Pose finger-tip landmarks become noisy or disappear as the hands overlap.
+    // Wrists remain considerably steadier, so use them for the latch. Calibrate
+    // 4 cm against shoulder width so normalized and MediaPipe-world packets act
+    // the same on the phone and computer receiver.
+    const shoulderWidth = metricPoints[11].distanceTo(metricPoints[12]);
+    const fourCentimeters = THREE.MathUtils.clamp(shoulderWidth * (0.04 / 0.38), 0.03, 0.07);
+    const leftHandPoints = [15, 17, 19, 21];
+    const rightHandPoints = [16, 18, 20, 22];
+    const handDistance = Math.min(...leftHandPoints.flatMap((left) =>
+      rightHandPoints.map((right) => metricPoints[left].distanceTo(metricPoints[right]))
+    ));
     if (!handLatchEnabledRef.current) handsLatchedRef.current = false;
-    else if (!handsLatchedRef.current && palmDistance <= 0.04) handsLatchedRef.current = true;
-    else if (handsLatchedRef.current && palmDistance >= 0.09) handsLatchedRef.current = false;
+    else if (!handsLatchedRef.current && handDistance <= fourCentimeters) handsLatchedRef.current = true;
+    else if (handsLatchedRef.current && handDistance >= fourCentimeters * 2.25) handsLatchedRef.current = false;
     const rawPoints = world.map((p) => new THREE.Vector3(-p.x * 3.2, -p.y * 3.2, -p.z * 3.2));
     if (smoothedPointsRef.current.length !== rawPoints.length) {
       smoothedPointsRef.current = rawPoints.map((point) => point.clone());
@@ -264,10 +269,9 @@ export default function MotionStudio() {
     }
     const points = smoothedPointsRef.current.map((point) => point.clone());
     if (handsLatchedRef.current) {
-      const sharedPalm = [15, 17, 19, 21, 16, 18, 20, 22]
-        .reduce((sum, index) => sum.add(points[index]), new THREE.Vector3())
-        .multiplyScalar(1 / 8);
-      for (const index of [15, 17, 19, 21, 16, 18, 20, 22]) points[index].copy(sharedPalm);
+      const sharedWrist = points[15].clone().add(points[16]).multiplyScalar(0.5);
+      points[15].copy(sharedWrist);
+      points[16].copy(sharedWrist);
     }
     const hip = points[23].clone().add(points[24]).multiplyScalar(0.5);
     const center = new THREE.Vector3(0, 0.15, 0).sub(hip);
@@ -846,7 +850,7 @@ export default function MotionStudio() {
             }}
           >
             <option value="./models/male_skeleton.glb">Male skeleton</option>
-            <option value="./models/dnd_low_poly_human_rigged_v11.glb">D&amp;D low-poly human</option>
+            <option value="./models/dnd_low_poly_human_rigged_v12.glb">D&amp;D low-poly human</option>
             <option value="./models/spiderverse_miles.glb">Spider-Verse Miles</option>
             <option value="./models/lucario_thicc.glb">Lucario</option>
           </select>

@@ -100,6 +100,7 @@ const segments = [
   const startBone = boneByName.get(startName), endBone = boneByName.get(endName);
   return {
     isArm: /^[rl](Collar|Shldr|ForeArm|Hand)_/.test(startName),
+    isLeg: /^[rl](Thigh|Shin|Foot)_/.test(startName),
     startIndex: bones.indexOf(startBone),
     endIndex: bones.indexOf(endBone),
     start: startBone.getWorldPosition(new THREE.Vector3()),
@@ -129,7 +130,7 @@ for (let triangle = 0; triangle + 2 < unindexedPositions.count; triangle += 3) {
     const nearest = segments
       .map((segment) => ({ segment, ...segmentProjection(point, segment) }))
       .sort((a, b) => a.distance - b.distance)[0];
-    if (nearest.segment.isArm) armCorners++;
+    if (nearest.segment.isArm || nearest.segment.isLeg) armCorners++;
   }
   // Remove only faces wholly owned by an arm. Mixed faces form the chest and
   // shoulder boundary; preserve them, but force their weights onto body bones
@@ -157,7 +158,7 @@ const skinIndices = new Uint16Array(positions.count * 4);
 const skinWeights = new Float32Array(positions.count * 4);
 for (let vertex = 0; vertex < positions.count; vertex++) {
   const point = new THREE.Vector3().fromBufferAttribute(positions, vertex);
-  const candidates = forceBodyMask[vertex] ? segments.filter((segment) => !segment.isArm) : segments;
+  const candidates = forceBodyMask[vertex] ? segments.filter((segment) => !segment.isArm && !segment.isLeg) : segments;
   const nearest = candidates
     .map((segment) => ({ segment, ...segmentProjection(point, segment) }))
     .sort((a, b) => a.distance - b.distance)[0];
@@ -235,8 +236,32 @@ for (const [prefix, suffixes] of [["r", ["018", "019", "020"]], ["l", ["042", "0
   armPiece(shoulder, forearm, 0.46, 0.36, `${prefix}_UpperArm_Stable`);
   armPiece(forearm, hand, 0.34, 0.27, `${prefix}_ForeArm_Stable`);
   const handPosition = boneByName.get(hand).getWorldPosition(new THREE.Vector3());
-  const handGeometry = new THREE.DodecahedronGeometry(0.38, 0).scale(0.72, 1.15, 0.55).translate(handPosition.x, handPosition.y - 0.22, handPosition.z);
+  const handGeometry = new THREE.BoxGeometry(0.62, 0.72, 0.34, 1, 1, 1).translate(handPosition.x, handPosition.y - 0.3, handPosition.z);
   addRigidArmPart(handGeometry, hand, `${prefix}_Hand_Stable`);
+  // A separate finger block gives the silhouette a palm and fingers instead
+  // of the tiny pointed nub used by earlier generated versions.
+  const fingersGeometry = new THREE.BoxGeometry(0.54, 0.48, 0.28, 1, 1, 1).translate(handPosition.x, handPosition.y - 0.82, handPosition.z);
+  addRigidArmPart(fingersGeometry, hand, `${prefix}_Fingers_Stable`);
+}
+
+// The source knees contain long cross-joint triangles and collapse when their
+// blended weights rotate. Use rigid low-poly pieces at the hip, knee and ankle;
+// each joint can bend without twisting or stretching the surrounding mesh.
+for (const [prefix, suffixes] of [["r", ["083", "084", "085", "086"]], ["l", ["0100", "0101", "0102", "0103"]]]) {
+  const thigh = `${prefix}Thigh_${suffixes[0]}`;
+  const shin = `${prefix}Shin_${suffixes[1]}`;
+  const foot = `${prefix}Foot_${suffixes[2]}`;
+  const toe = `${prefix}Toe_${suffixes[3]}`;
+  armPiece(thigh, shin, 0.62, 0.49, `${prefix}_Thigh_Stable`);
+  const kneePosition = boneByName.get(shin).getWorldPosition(new THREE.Vector3());
+  const kneeGeometry = new THREE.DodecahedronGeometry(0.5, 0).scale(0.92, 0.82, 0.9).translate(kneePosition.x, kneePosition.y, kneePosition.z);
+  addRigidArmPart(kneeGeometry, shin, `${prefix}_Knee_Stable`);
+  armPiece(shin, foot, 0.46, 0.34, `${prefix}_Shin_Stable`);
+  const ankle = boneByName.get(foot).getWorldPosition(new THREE.Vector3());
+  const toePosition = boneByName.get(toe).getWorldPosition(new THREE.Vector3());
+  const footLength = Math.max(0.6, ankle.distanceTo(toePosition));
+  const footGeometry = new THREE.BoxGeometry(0.58, 0.42, footLength, 1, 1, 1).translate(ankle.x, ankle.y - 0.16, ankle.z + footLength * 0.32);
+  addRigidArmPart(footGeometry, foot, `${prefix}_Foot_Stable`);
 }
 
 function addAnchor(parentName, name, offset = new THREE.Vector3()) {
