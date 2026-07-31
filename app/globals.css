@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+:root { --ink:#eef4ff; --muted:#8290a8; --line:#263248; --panel:#0c1320; --mint:#72f2c6; --blue:#75a9ff; }
+* { box-sizing: border-box; }
+html, body { margin:0; min-height:100%; background:#070b12; color:var(--ink); }
+body { font-family:Arial, Helvetica, sans-serif; background-image:radial-gradient(circle at 50% -20%,#17243b 0,transparent 44%); }
+button, input { font:inherit; }
+.studio { min-height:100vh; max-width:1500px; margin:auto; padding:28px 34px 20px; display:flex; flex-direction:column; gap:22px; }
+.topbar { display:flex; align-items:flex-end; justify-content:space-between; border-bottom:1px solid var(--line); padding-bottom:18px; }
+.eyebrow { color:var(--mint); font:700 11px/1 monospace; letter-spacing:.22em; margin:0 0 8px; }
+h1 { font-size:clamp(28px,4vw,52px); line-height:.95; letter-spacing:-.05em; margin:0; }
+.status { border:1px solid var(--line); border-radius:100px; padding:9px 14px; text-transform:uppercase; letter-spacing:.13em; font-size:10px; color:var(--muted); }
+.status span { display:inline-block; width:7px; height:7px; border-radius:50%; background:#536078; margin-right:7px; }
+.status-tracking span { background:var(--mint); box-shadow:0 0 12px var(--mint); }
+.workspace { flex:1; min-height:580px; display:grid; grid-template-columns:minmax(0,1.08fr) minmax(420px,.92fr); gap:18px; }
+.panel { min-width:0; background:linear-gradient(145deg,rgba(15,24,39,.96),rgba(8,13,23,.98)); border:1px solid var(--line); border-radius:18px; overflow:hidden; padding:16px; display:flex; flex-direction:column; }
+.panel-head { height:38px; display:grid; grid-template-columns:30px 1fr auto; align-items:start; gap:8px; }
+.panel-head span { font:700 10px monospace; color:var(--mint); }
+.panel-head h2 { margin:0; font-size:15px; letter-spacing:.02em; }
+.panel-head small { color:var(--muted); max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.camera-stage,.viewport { position:relative; flex:1; min-height:440px; border:1px solid #1e2a40; border-radius:11px; overflow:hidden; background:#050912; }
+.camera-stage video,.camera-stage canvas { position:absolute; width:100%; height:100%; object-fit:cover; transform:scaleX(-1); }
+.camera-placeholder { position:absolute; inset:0; display:grid; place-content:center; justify-items:center; gap:18px; color:var(--muted); background:radial-gradient(circle,#111d2f,#060a12 65%); }
+.scan-icon { width:88px; height:120px; border:1px solid #33425b; border-radius:46% 46% 34% 34%; position:relative; }
+.scan-icon:after { content:""; position:absolute; left:-24px; right:-24px; top:45%; border-top:2px solid var(--mint); box-shadow:0 0 18px var(--mint); }
+.camera-message { position:absolute; left:14px; bottom:14px; padding:8px 11px; border:1px solid #31405b; background:rgba(5,9,18,.78); backdrop-filter:blur(8px); border-radius:7px; font-size:12px; }
+.controls { padding-top:13px; display:flex; }
+button,.file-button { min-height:44px; display:inline-flex; justify-content:center; align-items:center; border-radius:9px; border:1px solid var(--line); padding:0 18px; font-weight:700; cursor:pointer; }
+.model-select { margin-top:13px; min-height:44px; border-radius:9px; border:1px solid var(--line); padding:0 13px; color:var(--ink); background:#111b2b; }
+.primary { background:var(--mint); color:#04120f; border-color:var(--mint); }
+.secondary,.file-button { color:var(--ink); background:#111b2b; }
+button:disabled { opacity:.55; cursor:wait; }
+.viewport canvas { display:block; width:100%; height:100%; }
+.axis-label { position:absolute; top:12px; left:12px; color:var(--mint); font:700 9px monospace; letter-spacing:.18em; pointer-events:none; }
+.file-button { margin-top:13px; }
+.file-button input { display:none; }
+.privacy-note { margin:8px 2px 0; color:var(--muted); font-size:11px; }
+footer { display:flex; justify-content:space-between; gap:24px; color:var(--muted); font-size:12px; }
+footer div:first-child { display:flex; gap:12px; }
+footer b { color:var(--ink); }
+.legend { display:flex; align-items:center; gap:7px; white-space:nowrap; }
+.legend a { color:var(--muted); }
+.credits { white-space:normal; }
+.legend i { width:8px; height:8px; border-radius:50%; display:inline-block; margin-left:10px; }
+.mint { background:var(--mint); }.blue { background:var(--blue); }
+@media(max-width:900px) {
+  .studio { padding:18px 14px; }
+  .workspace { grid-template-columns:1fr; }
+  .camera-stage,.viewport { min-height:58vh; }
+  footer { flex-direction:column; }
+}
