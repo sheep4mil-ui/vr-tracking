@@ -59,6 +59,7 @@ export default function MotionStudio() {
   const expressionMeshesRef = useRef<THREE.Mesh[]>([]);
   const jawRef = useRef<{ bone: THREE.Bone; rest: THREE.Quaternion } | null>(null);
   const latestDetailRef = useRef<{ hands: number[][][]; handedness: string[]; face: Record<string, number> }>({ hands: [], handedness: [], face: {} });
+  const overlayDetailRef = useRef<{ hands: NormalizedLandmark[][]; face: NormalizedLandmark[] }>({ hands: [], face: [] });
 
   useEffect(() => {
     const mount = viewportRef.current;
@@ -207,6 +208,21 @@ export default function MotionStudio() {
       ctx.arc(p.x * canvas.width, p.y * canvas.height, Math.max(3, canvas.width / 180), 0, Math.PI * 2);
       ctx.fill();
     });
+    ctx.fillStyle = "#ffd66e";
+    overlayDetailRef.current.hands.forEach((hand) => {
+      hand.forEach((point) => {
+        ctx.beginPath();
+        ctx.arc(point.x * canvas.width, point.y * canvas.height, Math.max(2.5, canvas.width / 300), 0, Math.PI * 2);
+        ctx.fill();
+      });
+    });
+    ctx.fillStyle = "rgba(117, 169, 255, .8)";
+    overlayDetailRef.current.face.forEach((point, index) => {
+      if (index % 2 !== 0) return;
+      ctx.beginPath();
+      ctx.arc(point.x * canvas.width, point.y * canvas.height, Math.max(1.2, canvas.width / 700), 0, Math.PI * 2);
+      ctx.fill();
+    });
   }
 
   function updateRig(world: NormalizedLandmark[]) {
@@ -258,6 +274,11 @@ export default function MotionStudio() {
     const model = modelRef.current;
     if (!model || !rigRef.current.size) return;
     for (const driver of rigRef.current.values()) {
+      if (/Collar/.test(driver.semantic)) {
+        driver.bone.quaternion.slerp(driver.restLocalQuaternion, 0.45);
+        driver.bone.updateMatrixWorld(true);
+        continue;
+      }
       if (upperBodyOnlyRef.current && /Thigh|Shin|Foot/.test(driver.semantic)) {
         driver.bone.quaternion.slerp(driver.restLocalQuaternion, 0.35);
         driver.bone.updateMatrixWorld(true);
@@ -484,6 +505,10 @@ export default function MotionStudio() {
             const handedness = hands.handedness.map((categories) => categories[0]?.categoryName ?? "Left");
             const faceValues = Object.fromEntries((face.faceBlendshapes[0]?.categories ?? []).map((category) => [category.categoryName, category.score]));
             latestDetailRef.current = { hands: handPoints, handedness, face: faceValues };
+            overlayDetailRef.current = {
+              hands: hands.landmarks,
+              face: face.faceLandmarks[0] ?? [],
+            };
             handPoints.forEach((hand, index) => driveHand(handedness[index], hand));
             updateFace(faceValues);
           }
