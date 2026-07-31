@@ -70,7 +70,6 @@ const segments = [
   ["lCollar_041", "lShldr_042"], ["lShldr_042", "lForeArm_043"], ["lForeArm_043", "lHand_044"],
   ["rThigh_083", "rShin_084"], ["rShin_084", "rFoot_085"], ["rFoot_085", "rToe_086"],
   ["lThigh_0100", "lShin_0101"], ["lShin_0101", "lFoot_0102"], ["lFoot_0102", "lToe_0103"],
-  ["lowerJaw_09", "head_06"],
 ].map(([startName, endName]) => {
   const startBone = boneByName.get(startName), endBone = boneByName.get(endName);
   return {
@@ -90,18 +89,18 @@ function distanceToSegment(point, start, end) {
 const positions = geometry.getAttribute("position");
 const skinIndices = new Uint16Array(positions.count * 4);
 const skinWeights = new Float32Array(positions.count * 4);
+
+// Use a single nearest anatomical segment per vertex. The earlier two-segment
+// blend allowed a torso vertex to inherit an arm bone (and vice versa), which
+// made whole limbs fold and stretch when tracking started. This low-poly mesh
+// benefits from firm, robot-like joint boundaries instead of cross-chain blends.
 for (let vertex = 0; vertex < positions.count; vertex++) {
   const point = new THREE.Vector3().fromBufferAttribute(positions, vertex);
   const nearest = segments
     .map((segment) => ({ ...segment, distance: distanceToSegment(point, segment.start, segment.end) }))
-    .sort((a, b) => a.distance - b.distance)
-    .slice(0, 2);
-  const influences = nearest.map((item) => 1 / Math.max(item.distance, 0.035));
-  const total = influences[0] + influences[1];
-  skinIndices[vertex * 4] = nearest[0].boneIndex;
-  skinIndices[vertex * 4 + 1] = nearest[1].boneIndex;
-  skinWeights[vertex * 4] = influences[0] / total;
-  skinWeights[vertex * 4 + 1] = influences[1] / total;
+    .sort((a, b) => a.distance - b.distance)[0];
+  skinIndices[vertex * 4] = nearest.boneIndex;
+  skinWeights[vertex * 4] = 1;
 }
 geometry.setAttribute("skinIndex", new THREE.Uint16BufferAttribute(skinIndices, 4));
 geometry.setAttribute("skinWeight", new THREE.Float32BufferAttribute(skinWeights, 4));
