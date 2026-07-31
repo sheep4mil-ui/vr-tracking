@@ -12,6 +12,7 @@ type BoneDriver = {
   bone: THREE.Bone;
   semantic: string;
   restDirection: THREE.Vector3;
+  restLocalQuaternion: THREE.Quaternion;
   restWorldQuaternion: THREE.Quaternion;
 };
 
@@ -52,6 +53,8 @@ export default function MotionStudio() {
   const [connectionState, setConnectionState] = useState("Not connected");
   const [swapSides, setSwapSides] = useState(true);
   const swapSidesRef = useRef(true);
+  const [upperBodyOnly, setUpperBodyOnly] = useState(false);
+  const upperBodyOnlyRef = useRef(false);
   const smoothedPointsRef = useRef<THREE.Vector3[]>([]);
   const expressionMeshesRef = useRef<THREE.Mesh[]>([]);
   const jawRef = useRef<{ bone: THREE.Bone; rest: THREE.Quaternion } | null>(null);
@@ -255,6 +258,11 @@ export default function MotionStudio() {
     const model = modelRef.current;
     if (!model || !rigRef.current.size) return;
     for (const driver of rigRef.current.values()) {
+      if (upperBodyOnlyRef.current && /Thigh|Shin|Foot/.test(driver.semantic)) {
+        driver.bone.quaternion.slerp(driver.restLocalQuaternion, 0.35);
+        driver.bone.updateMatrixWorld(true);
+        continue;
+      }
       const segment = segmentForBone(driver.semantic, points);
       if (!segment) continue;
       const target = segment[1].clone().sub(segment[0]).normalize();
@@ -392,6 +400,7 @@ export default function MotionStudio() {
         bone: node,
         semantic,
         restDirection: end.sub(start).normalize(),
+        restLocalQuaternion: node.quaternion.clone(),
         restWorldQuaternion: node.getWorldQuaternion(new THREE.Quaternion()),
       });
     });
@@ -612,6 +621,17 @@ export default function MotionStudio() {
               }}
             />
             Swap legs left/right
+          </label>
+          <label className="calibration-toggle">
+            <input
+              type="checkbox"
+              checked={upperBodyOnly}
+              onChange={(event) => {
+                upperBodyOnlyRef.current = event.target.checked;
+                setUpperBodyOnly(event.target.checked);
+              }}
+            />
+            Upper body only
           </label>
           <label className="file-button">
             <input type="file" accept=".glb,model/gltf-binary" onChange={loadModel} />
