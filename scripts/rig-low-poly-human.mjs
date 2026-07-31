@@ -93,9 +93,21 @@ function segmentProjection(point, segment) {
 const positions = geometry.getAttribute("position");
 const skinIndices = new Uint16Array(positions.count * 4);
 const skinWeights = new Float32Array(positions.count * 4);
+const normalizedSize = geometry.boundingBox.getSize(new THREE.Vector3());
+const armXThreshold = normalizedSize.x * 0.2;
+const armYThreshold = geometry.boundingBox.min.y + normalizedSize.y * 0.32;
 for (let vertex = 0; vertex < positions.count; vertex++) {
   const point = new THREE.Vector3().fromBufferAttribute(positions, vertex);
-  const nearest = segments
+  let candidates = segments;
+  // The source is an A-pose while the donor skeleton is wider. Fingertips hang
+  // far below the donor hand and can otherwise look closer to the hip or leg.
+  // Once a vertex is in the outer upper-body silhouette, keep it on the arm on
+  // that same side all the way through the hand/fingers.
+  if (Math.abs(point.x) > armXThreshold && point.y > armYThreshold) {
+    const side = Math.sign(point.x);
+    candidates = segments.filter((segment) => segment.isArm && Math.sign(segment.start.x) === side);
+  }
+  const nearest = candidates
     .map((segment) => ({ segment, ...segmentProjection(point, segment) }))
     .sort((a, b) => a.distance - b.distance)[0];
   // Smooth only across this single joint. No vertex can mix a torso/arm,
