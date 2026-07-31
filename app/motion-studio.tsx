@@ -846,7 +846,7 @@ export default function MotionStudio() {
             }}
           >
             <option value="./models/male_skeleton.glb">Male skeleton</option>
-            <option value="./models/dnd_low_poly_human_rigged_v8.glb">D&amp;D low-poly human</option>
+            <option value="./models/dnd_low_poly_human_rigged_v9.glb">D&amp;D low-poly human</option>
             <option value="./models/spiderverse_miles.glb">Spider-Verse Miles</option>
             <option value="./models/lucario_thicc.glb">Lucario</option>
           </select>

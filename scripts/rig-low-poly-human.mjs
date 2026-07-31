@@ -122,13 +122,15 @@ const unindexed = geometry.index ? geometry.toNonIndexed() : geometry;
 const unindexedPositions = unindexed.getAttribute("position");
 const keptVertices = [];
 for (let triangle = 0; triangle + 2 < unindexedPositions.count; triangle += 3) {
-  const center = new THREE.Vector3();
-  for (let corner = 0; corner < 3; corner++) center.add(new THREE.Vector3().fromBufferAttribute(unindexedPositions, triangle + corner));
-  center.multiplyScalar(1 / 3);
-  const nearest = segments
-    .map((segment) => ({ segment, ...segmentProjection(center, segment) }))
-    .sort((a, b) => a.distance - b.distance)[0];
-  if (!nearest.segment.isArm) keptVertices.push(triangle, triangle + 1, triangle + 2);
+  let touchesArm = false;
+  for (let corner = 0; corner < 3; corner++) {
+    const point = new THREE.Vector3().fromBufferAttribute(unindexedPositions, triangle + corner);
+    const nearest = segments
+      .map((segment) => ({ segment, ...segmentProjection(point, segment) }))
+      .sort((a, b) => a.distance - b.distance)[0];
+    if (nearest.segment.isArm) { touchesArm = true; break; }
+  }
+  if (!touchesArm) keptVertices.push(triangle, triangle + 1, triangle + 2);
 }
 const bodyGeometry = new THREE.BufferGeometry();
 for (const name of Object.keys(unindexed.attributes)) {
@@ -147,24 +149,9 @@ geometry.computeBoundingBox();
 const positions = geometry.getAttribute("position");
 const skinIndices = new Uint16Array(positions.count * 4);
 const skinWeights = new Float32Array(positions.count * 4);
-const normalizedSize = geometry.boundingBox.getSize(new THREE.Vector3());
-// Only the far-outer silhouette is unambiguously hand/finger geometry in the
-// A-pose. A wider 20% cutoff also captured the broad hips and pulled them up
-// with the hands; 30% stays outside the torso/hip envelope.
-const armXThreshold = normalizedSize.x * 0.3;
-const armYThreshold = geometry.boundingBox.min.y + normalizedSize.y * 0.32;
 for (let vertex = 0; vertex < positions.count; vertex++) {
   const point = new THREE.Vector3().fromBufferAttribute(positions, vertex);
-  let candidates = segments;
-  // The source is an A-pose while the donor skeleton is wider. Fingertips hang
-  // far below the donor hand and can otherwise look closer to the hip or leg.
-  // Once a vertex is in the outer upper-body silhouette, keep it on the arm on
-  // that same side all the way through the hand/fingers.
-  if (Math.abs(point.x) > armXThreshold && point.y > armYThreshold) {
-    const side = Math.sign(point.x);
-    candidates = segments.filter((segment) => segment.isArm && Math.sign(segment.start.x) === side);
-  }
-  const nearest = candidates
+  const nearest = segments
     .map((segment) => ({ segment, ...segmentProjection(point, segment) }))
     .sort((a, b) => a.distance - b.distance)[0];
   // Smooth only across this single joint. No vertex can mix a torso/arm,
