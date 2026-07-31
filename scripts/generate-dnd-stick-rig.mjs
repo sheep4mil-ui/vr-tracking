@@ -54,10 +54,15 @@ const bodyGeometry = new THREE.SphereGeometry(1, 20, 14);
 function addJoint(name, radius = 0.22) {
   const bone = byName.get(name);
   if (!bone) return;
+  scene.updateMatrixWorld(true);
+  const worldPosition = bone.getWorldPosition(new THREE.Vector3());
   const joint = new THREE.Mesh(jointGeometry, grey);
   joint.name = `Shape_${name}`;
+  joint.position.copy(worldPosition);
   joint.scale.setScalar(radius / 0.22);
-  bone.add(joint);
+  scene.add(joint);
+  scene.updateMatrixWorld(true);
+  bone.attach(joint);
 }
 
 function addSegment(startName, endName, radius = 0.16) {
@@ -65,16 +70,19 @@ function addSegment(startName, endName, radius = 0.16) {
   const end = byName.get(endName);
   if (!start || !end) return;
   scene.updateMatrixWorld(true);
+  const startWorld = start.getWorldPosition(new THREE.Vector3());
   const endWorld = end.getWorldPosition(new THREE.Vector3());
-  const endLocal = start.worldToLocal(endWorld.clone());
-  const length = endLocal.length();
+  const direction = endWorld.clone().sub(startWorld);
+  const length = direction.length();
   if (length < 0.001) return;
   const limb = new THREE.Mesh(limbGeometry, grey);
   limb.name = `Shape_${startName}_to_${endName}`;
-  limb.position.copy(endLocal).multiplyScalar(0.5);
+  limb.position.copy(startWorld).addScaledVector(direction, 0.5);
   limb.scale.set(radius / 0.16, length, radius / 0.16);
-  limb.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), endLocal.clone().normalize());
-  start.add(limb);
+  limb.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize());
+  scene.add(limb);
+  scene.updateMatrixWorld(true);
+  start.attach(limb);
 }
 
 const segments = [
@@ -108,11 +116,14 @@ for (const name of [
 function addBodyShape(boneName, name, scale, position = new THREE.Vector3(), material = grey) {
   const bone = byName.get(boneName);
   if (!bone) return;
+  scene.updateMatrixWorld(true);
   const mesh = new THREE.Mesh(bodyGeometry, material);
   mesh.name = name;
-  mesh.position.copy(position);
+  mesh.position.copy(bone.getWorldPosition(new THREE.Vector3())).add(position);
   mesh.scale.copy(scale);
-  bone.add(mesh);
+  scene.add(mesh);
+  scene.updateMatrixWorld(true);
+  bone.attach(mesh);
   return mesh;
 }
 
@@ -133,9 +144,11 @@ if (head) {
   const featureAtWorld = (name, worldPosition, scale, material) => {
     const mesh = new THREE.Mesh(bodyGeometry, material);
     mesh.name = name;
-    mesh.position.copy(head.worldToLocal(worldPosition.clone()));
+    mesh.position.copy(worldPosition);
     mesh.scale.copy(scale);
-    head.add(mesh);
+    scene.add(mesh);
+    scene.updateMatrixWorld(true);
+    head.attach(mesh);
     return mesh;
   };
   const rightEye = byName.get("rEye_00")?.getWorldPosition(new THREE.Vector3());
