@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { FilesetResolver, PoseLandmarker, type NormalizedLandmark } from "@mediapipe/tasks-vision";
+import { FaceLandmarker, FilesetResolver, HandLandmarker, PoseLandmarker, type NormalizedLandmark } from "@mediapipe/tasks-vision";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import Peer, { type DataConnection } from "peerjs";
@@ -30,6 +30,8 @@ export default function MotionStudio() {
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const landmarkerRef = useRef<PoseLandmarker | null>(null);
+  const handLandmarkerRef = useRef<HandLandmarker | null>(null);
+  const faceLandmarkerRef = useRef<FaceLandmarker | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const frameRef = useRef<number | null>(null);
   const jointsRef = useRef<THREE.Mesh[]>([]);
@@ -51,6 +53,9 @@ export default function MotionStudio() {
   const [swapSides, setSwapSides] = useState(true);
   const swapSidesRef = useRef(true);
   const smoothedPointsRef = useRef<THREE.Vector3[]>([]);
+  const expressionMeshesRef = useRef<THREE.Mesh[]>([]);
+  const jawRef = useRef<{ bone: THREE.Bone; rest: THREE.Quaternion } | null>(null);
+  const latestDetailRef = useRef<{ hands: number[][][]; handedness: string[]; face: Record<string, number> }>({ hands: [], handedness: [], face: {} });
 
   useEffect(() => {
     const mount = viewportRef.current;
@@ -158,11 +163,14 @@ export default function MotionStudio() {
       connectionsRef.current = [connection];
       connection.on("open", () => setConnectionState("Receiving live motion"));
       connection.on("data", (data) => {
-        if (!Array.isArray(data)) return;
-        const landmarks = data.map((point) => ({
+        const packet = data as { pose?: number[][]; hands?: number[][][]; handedness?: string[]; face?: Record<string, number> };
+        if (!Array.isArray(packet.pose)) return;
+        const landmarks = packet.pose.map((point) => ({
           x: Number(point[0]), y: Number(point[1]), z: Number(point[2]), visibility: Number(point[3] ?? 1),
         })) as NormalizedLandmark[];
         updateRig(landmarks);
+        (packet.hands ?? []).forEach((hand, index) => driveHand(packet.handedness?.[index] ?? "Left", hand));
+        updateFace(packet.face ?? {});
       });
       connection.on("close", () => setConnectionState("Phone disconnected"));
       connection.on("error", () => setConnectionState("Connection failed"));
@@ -260,6 +268,58 @@ export default function MotionStudio() {
     }
   }
 
+  function fingerSemantic(name: string) {
+    const n = name.toLowerCase();
+    let side = "";
+    if (/^r(thumb|index|mid|ring|pinky)/.test(n) || /_(r)_/.test(n) || /\.r_/.test(n)) side = "r";
+    if (/^l(thumb|index|mid|ring|pinky)/.test(n) || /_(l)_/.test(n) || /\.l_/.test(n)) side = "l";
+    if (!side) return undefined;
+    const finger = n.includes("thumb") ? "Thumb" : n.includes("index") ? "Index" : n.includes("middle") || n.includes("mid") ? "Middle" : n.includes("ring") ? "Ring" : n.includes("pinky") ? "Pinky" : "";
+    if (!finger) return undefined;
+    const base = n.includes("_base");
+    const match = n.match(/(?:thumb|index|middle|mid|ring|pinky)(?:0?)([123])/);
+    const lucario = n.match(/(?:thumb|index|middle|ring)(0[12])/);
+    const joint = base ? 0 : match ? Number(match[1]) : lucario ? Number(lucario[1]) : 1;
+    return `${side}${finger}${joint}`;
+  }
+
+  function driveHand(handedness: string, raw: number[][]) {
+    if (raw.length < 21) return;
+    const side = handedness.toLowerCase().startsWith("left") ? "l" : "r";
+    const p = raw.map((point) => new THREE.Vector3(-Number(point[0]), -Number(point[1]), -Number(point[2])));
+    const fingerStarts: Record<string, number> = { Thumb: 1, Index: 5, Middle: 9, Ring: 13, Pinky: 17 };
+    for (const driver of rigRef.current.values()) {
+      if (!driver.semantic.startsWith(side) || !/Thumb|Index|Middle|Ring|Pinky/.test(driver.semantic)) continue;
+      const match = driver.semantic.match(/^[lr](Thumb|Index|Middle|Ring|Pinky)([0-3])$/);
+      if (!match) continue;
+      const start = fingerStarts[match[1]];
+      const joint = Number(match[2]);
+      const a = joint === 0 ? 0 : start + joint - 1;
+      const b = joint === 0 ? start : Math.min(start + joint, start + 3);
+      const target = p[b].clone().sub(p[a]).normalize();
+      if (target.lengthSq() < 0.01) continue;
+      const desiredWorld = new THREE.Quaternion().setFromUnitVectors(driver.restDirection, target).multiply(driver.restWorldQuaternion);
+      const parentWorld = new THREE.Quaternion();
+      driver.bone.parent?.getWorldQuaternion(parentWorld);
+      driver.bone.quaternion.copy(parentWorld.invert().multiply(desiredWorld));
+      driver.bone.updateMatrixWorld(true);
+    }
+  }
+
+  function updateFace(values: Record<string, number>) {
+    expressionMeshesRef.current.forEach((mesh) => {
+      if (!mesh.morphTargetDictionary || !mesh.morphTargetInfluences) return;
+      Object.entries(values).forEach(([name, score]) => {
+        const index = mesh.morphTargetDictionary?.[name];
+        if (index !== undefined) mesh.morphTargetInfluences![index] = score;
+      });
+    });
+    if (jawRef.current) {
+      const openness = values.jawOpen ?? 0;
+      jawRef.current.bone.quaternion.copy(jawRef.current.rest).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(openness * 0.38, 0, 0)));
+    }
+  }
+
   function classifyBone(name: string) {
     const n = name.toLowerCase();
     const exact: Array<[RegExp, string]> = [
@@ -289,7 +349,7 @@ export default function MotionStudio() {
       [/^foot_r_/, "rFoot"], [/^foot_l_/, "lFoot"],
       [/^foot\.r_/, "rFoot"], [/^foot\.l_/, "lFoot"],
     ];
-    return exact.find(([pattern]) => pattern.test(n))?.[1];
+    return exact.find(([pattern]) => pattern.test(n))?.[1] ?? fingerSemantic(name);
   }
 
   function installModel(model: THREE.Object3D, fileName: string) {
@@ -314,7 +374,13 @@ export default function MotionStudio() {
     scene.add(model);
     model.updateMatrixWorld(true);
     const drivers = new Map<string, BoneDriver>();
+    expressionMeshesRef.current = [];
+    jawRef.current = null;
     model.traverse((node) => {
+      if (node instanceof THREE.Mesh && node.morphTargetDictionary) expressionMeshesRef.current.push(node);
+      if (node instanceof THREE.Bone && /lowerjaw|(^|_)jaw/i.test(node.name)) {
+        jawRef.current = { bone: node, rest: node.quaternion.clone() };
+      }
       if (!(node instanceof THREE.Bone)) return;
       const semantic = classifyBone(node.name);
       if (!semantic) return;
@@ -363,6 +429,27 @@ export default function MotionStudio() {
           minPoseDetectionConfidence: 0.55,
           minTrackingConfidence: 0.55,
         });
+        handLandmarkerRef.current = await HandLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+            delegate: "GPU",
+          },
+          runningMode: "VIDEO",
+          numHands: 2,
+          minHandDetectionConfidence: 0.5,
+          minTrackingConfidence: 0.5,
+        });
+        faceLandmarkerRef.current = await FaceLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+            delegate: "GPU",
+          },
+          runningMode: "VIDEO",
+          numFaces: 1,
+          outputFaceBlendshapes: true,
+          minFaceDetectionConfidence: 0.5,
+          minTrackingConfidence: 0.5,
+        });
       }
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
@@ -380,13 +467,27 @@ export default function MotionStudio() {
         if (video.currentTime !== lastVideoTime) {
           lastVideoTime = video.currentTime;
           const result = landmarkerRef.current.detectForVideo(video, performance.now());
+          if (timingRef.current.frames % 2 === 0 && handLandmarkerRef.current && faceLandmarkerRef.current) {
+            const timestamp = performance.now();
+            const hands = handLandmarkerRef.current.detectForVideo(video, timestamp);
+            const face = faceLandmarkerRef.current.detectForVideo(video, timestamp);
+            const handPoints = hands.worldLandmarks.map((hand) => hand.map((point) => [point.x, point.y, point.z]));
+            const handedness = hands.handedness.map((categories) => categories[0]?.categoryName ?? "Left");
+            const faceValues = Object.fromEntries((face.faceBlendshapes[0]?.categories ?? []).map((category) => [category.categoryName, category.score]));
+            latestDetailRef.current = { hands: handPoints, handedness, face: faceValues };
+            handPoints.forEach((hand, index) => driveHand(handedness[index], hand));
+            updateFace(faceValues);
+          }
           if (result.landmarks[0]) {
             drawOverlay(result.landmarks[0]);
             updateRig(result.worldLandmarks[0] ?? result.landmarks[0]);
             const broadcastLandmarks = result.worldLandmarks[0] ?? result.landmarks[0];
             const now = performance.now();
             if (mode === "phone" && now - lastBroadcastRef.current >= 32) {
-              const packet = broadcastLandmarks.map((point) => [point.x, point.y, point.z, point.visibility ?? 1]);
+              const packet = {
+                pose: broadcastLandmarks.map((point) => [point.x, point.y, point.z, point.visibility ?? 1]),
+                ...latestDetailRef.current,
+              };
               connectionsRef.current.forEach((connection) => {
                 if (connection.open) connection.send(packet);
               });
