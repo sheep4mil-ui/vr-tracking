@@ -4,8 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import { FilesetResolver, PoseLandmarker, type NormalizedLandmark } from "@mediapipe/tasks-vision";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import Peer, { type DataConnection } from "peerjs";
 
 type TrackerState = "idle" | "loading" | "ready" | "tracking" | "error";
+type DeviceMode = "phone" | "computer";
 type BoneDriver = {
   bone: THREE.Bone;
   semantic: string;
@@ -40,6 +42,14 @@ export default function MotionStudio() {
   const [fps, setFps] = useState(0);
   const [modelName, setModelName] = useState("Live mannequin");
   const timingRef = useRef({ last: performance.now(), frames: 0 });
+  const peerRef = useRef<Peer | null>(null);
+  const connectionsRef = useRef<DataConnection[]>([]);
+  const lastBroadcastRef = useRef(0);
+  const [mode, setMode] = useState<DeviceMode>("phone");
+  const [pairCode, setPairCode] = useState("");
+  const [connectionState, setConnectionState] = useState("Not connected");
+  const [swapSides, setSwapSides] = useState(true);
+  const swapSidesRef = useRef(true);
 
   useEffect(() => {
     const mount = viewportRef.current;
@@ -104,8 +114,60 @@ export default function MotionStudio() {
       if (frameRef.current) cancelAnimationFrame(frameRef.current);
       renderer.dispose();
       mount.removeChild(renderer.domElement);
+      peerRef.current?.destroy();
     };
   }, []);
+
+  function createPairCode() {
+    return Math.random().toString(36).slice(2, 8).toUpperCase();
+  }
+
+  function beginBroadcastSession() {
+    peerRef.current?.destroy();
+    connectionsRef.current = [];
+    const code = createPairCode();
+    setPairCode(code);
+    setConnectionState("Opening room…");
+    const peer = new Peer(`motion-mirror-${code.toLowerCase()}`);
+    peerRef.current = peer;
+    peer.on("open", () => setConnectionState("Waiting for computer"));
+    peer.on("connection", (connection) => {
+      connectionsRef.current.push(connection);
+      connection.on("open", () => setConnectionState("Computer connected"));
+      connection.on("close", () => {
+        connectionsRef.current = connectionsRef.current.filter((item) => item !== connection);
+        setConnectionState("Computer disconnected");
+      });
+    });
+    peer.on("error", () => setConnectionState("Connection service unavailable"));
+  }
+
+  function connectToPhone() {
+    const cleanCode = pairCode.trim().toLowerCase();
+    if (cleanCode.length !== 6) {
+      setConnectionState("Enter the 6-character phone code");
+      return;
+    }
+    peerRef.current?.destroy();
+    setConnectionState("Connecting…");
+    const peer = new Peer();
+    peerRef.current = peer;
+    peer.on("open", () => {
+      const connection = peer.connect(`motion-mirror-${cleanCode}`, { reliable: false });
+      connectionsRef.current = [connection];
+      connection.on("open", () => setConnectionState("Receiving live motion"));
+      connection.on("data", (data) => {
+        if (!Array.isArray(data)) return;
+        const landmarks = data.map((point) => ({
+          x: Number(point[0]), y: Number(point[1]), z: Number(point[2]), visibility: Number(point[3] ?? 1),
+        })) as NormalizedLandmark[];
+        updateRig(landmarks);
+      });
+      connection.on("close", () => setConnectionState("Phone disconnected"));
+      connection.on("error", () => setConnectionState("Connection failed"));
+    });
+    peer.on("error", () => setConnectionState("Could not find that phone"));
+  }
 
   function drawOverlay(landmarks: NormalizedLandmark[]) {
     const canvas = overlayRef.current;
@@ -156,16 +218,18 @@ export default function MotionStudio() {
     const hip = p[23].clone().add(p[24]).multiplyScalar(0.5);
     const shoulders = p[11].clone().add(p[12]).multiplyScalar(0.5);
     const hand = (a: number, b: number, c: number) => p[a].clone().add(p[b]).add(p[c]).multiplyScalar(1 / 3);
+    const left = swapSidesRef.current ? { shoulder: 12, elbow: 14, wrist: 16, hand: [18, 20, 22], hip: 24, knee: 26, ankle: 28, foot: 32 } : { shoulder: 11, elbow: 13, wrist: 15, hand: [17, 19, 21], hip: 23, knee: 25, ankle: 27, foot: 31 };
+    const right = swapSidesRef.current ? { shoulder: 11, elbow: 13, wrist: 15, hand: [17, 19, 21], hip: 23, knee: 25, ankle: 27, foot: 31 } : { shoulder: 12, elbow: 14, wrist: 16, hand: [18, 20, 22], hip: 24, knee: 26, ankle: 28, foot: 32 };
     const table: Record<string, [THREE.Vector3, THREE.Vector3]> = {
       hip: [hip.clone().add(new THREE.Vector3(0, -0.25, 0)), hip],
       abdomen: [hip, shoulders.clone().lerp(hip, 0.48)],
       chest: [hip.clone().lerp(shoulders, 0.48), shoulders],
       neck: [shoulders, p[0]],
       head: [shoulders.clone().lerp(p[0], 0.65), p[0]],
-      rCollar: [shoulders, p[12]], rShldr: [p[12], p[14]], rForeArm: [p[14], p[16]], rHand: [p[16], hand(18, 20, 22)],
-      lCollar: [shoulders, p[11]], lShldr: [p[11], p[13]], lForeArm: [p[13], p[15]], lHand: [p[15], hand(17, 19, 21)],
-      rThigh: [p[24], p[26]], rShin: [p[26], p[28]], rFoot: [p[28], p[32]],
-      lThigh: [p[23], p[25]], lShin: [p[25], p[27]], lFoot: [p[27], p[31]],
+      rCollar: [shoulders, p[right.shoulder]], rShldr: [p[right.shoulder], p[right.elbow]], rForeArm: [p[right.elbow], p[right.wrist]], rHand: [p[right.wrist], hand(...right.hand as [number, number, number])],
+      lCollar: [shoulders, p[left.shoulder]], lShldr: [p[left.shoulder], p[left.elbow]], lForeArm: [p[left.elbow], p[left.wrist]], lHand: [p[left.wrist], hand(...left.hand as [number, number, number])],
+      rThigh: [p[right.hip], p[right.knee]], rShin: [p[right.knee], p[right.ankle]], rFoot: [p[right.ankle], p[right.foot]],
+      lThigh: [p[left.hip], p[left.knee]], lShin: [p[left.knee], p[left.ankle]], lFoot: [p[left.ankle], p[left.foot]],
     };
     return table[semantic];
   }
@@ -310,6 +374,15 @@ export default function MotionStudio() {
           if (result.landmarks[0]) {
             drawOverlay(result.landmarks[0]);
             updateRig(result.worldLandmarks[0] ?? result.landmarks[0]);
+            const broadcastLandmarks = result.worldLandmarks[0] ?? result.landmarks[0];
+            const now = performance.now();
+            if (mode === "phone" && now - lastBroadcastRef.current >= 32) {
+              const packet = broadcastLandmarks.map((point) => [point.x, point.y, point.z, point.visibility ?? 1]);
+              connectionsRef.current.forEach((connection) => {
+                if (connection.open) connection.send(packet);
+              });
+              lastBroadcastRef.current = now;
+            }
             setMessage("Body locked");
           } else setMessage("Move your full body into frame");
           timingRef.current.frames++;
@@ -363,20 +436,44 @@ export default function MotionStudio() {
         </div>
       </header>
 
+      <nav className="mode-switch" aria-label="Device mode">
+        <button className={mode === "phone" ? "active" : ""} onClick={() => { setMode("phone"); beginBroadcastSession(); }}>Phone · Broadcast</button>
+        <button className={mode === "computer" ? "active" : ""} onClick={() => { stopTracking(); setMode("computer"); setPairCode(""); setConnectionState("Enter the code shown on your phone"); }}>Computer · Receive</button>
+      </nav>
+
       <section className="workspace">
         <article className="panel camera-panel">
-          <div className="panel-head"><span>01</span><h2>Camera</h2><small>{fps ? `${fps} FPS` : "iPhone / webcam"}</small></div>
-          <div className="camera-stage">
-            <video ref={videoRef} playsInline muted />
-            <canvas ref={overlayRef} />
-            {state !== "tracking" && <div className="camera-placeholder"><div className="scan-icon" /><p>Your camera stays in this browser.</p></div>}
-            <div className="camera-message">{message}</div>
-          </div>
-          <div className="controls">
-            {state !== "tracking"
-              ? <button className="primary" onClick={startTracking} disabled={state === "loading"}>{state === "loading" ? "Preparing…" : "Start camera"}</button>
-              : <button className="secondary" onClick={stopTracking}>Pause camera</button>}
-          </div>
+          <div className="panel-head"><span>01</span><h2>{mode === "phone" ? "Phone camera" : "Phone connection"}</h2><small>{fps ? `${fps} FPS` : mode === "phone" ? "Broadcaster" : "Receiver"}</small></div>
+          {mode === "phone" ? <>
+            <div className="camera-stage">
+              <video ref={videoRef} playsInline muted />
+              <canvas ref={overlayRef} />
+              {state !== "tracking" && <div className="camera-placeholder"><div className="scan-icon" /><p>Your camera stays on your phone.</p></div>}
+              <div className="camera-message">{message}</div>
+            </div>
+            <div className="pair-strip">
+              <div><small>PAIRING CODE</small><strong>{pairCode || "Press start"}</strong></div>
+              <span>{connectionState}</span>
+            </div>
+            <div className="controls">
+              {state !== "tracking"
+                ? <button className="primary" onClick={() => { if (!pairCode) beginBroadcastSession(); startTracking(); }} disabled={state === "loading"}>{state === "loading" ? "Preparing…" : "Start broadcasting"}</button>
+                : <button className="secondary" onClick={stopTracking}>Pause camera</button>}
+            </div>
+          </> : <div className="receiver-card">
+            <div className="signal-rings"><span /><span /><span /></div>
+            <h3>Connect to your phone</h3>
+            <p>Type the six-character code shown on the phone.</p>
+            <input
+              value={pairCode}
+              onChange={(event) => setPairCode(event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6))}
+              placeholder="ABC123"
+              aria-label="Phone pairing code"
+              autoCapitalize="characters"
+            />
+            <button className="primary" onClick={connectToPhone}>Connect</button>
+            <div className="connection-label">{connectionState}</div>
+          </div>}
         </article>
 
         <article className="panel model-panel">
@@ -395,6 +492,17 @@ export default function MotionStudio() {
             <option value="./models/spiderverse_miles.glb">Spider-Verse Miles</option>
             <option value="./models/lucario_thicc.glb">Lucario</option>
           </select>
+          <label className="calibration-toggle">
+            <input
+              type="checkbox"
+              checked={swapSides}
+              onChange={(event) => {
+                swapSidesRef.current = event.target.checked;
+                setSwapSides(event.target.checked);
+              }}
+            />
+            Swap left/right tracking
+          </label>
           <label className="file-button">
             <input type="file" accept=".glb,model/gltf-binary" onChange={loadModel} />
             Load your .GLB model
