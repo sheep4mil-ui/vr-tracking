@@ -74,6 +74,7 @@ const segments = [
 ].map(([startName, endName]) => {
   const startBone = boneByName.get(startName), endBone = boneByName.get(endName);
   return {
+    isArm: /^[rl](Collar|Shldr|ForeArm|Hand)_/.test(startName),
     startIndex: bones.indexOf(startBone),
     endIndex: bones.indexOf(endBone),
     start: startBone.getWorldPosition(new THREE.Vector3()),
@@ -99,7 +100,12 @@ for (let vertex = 0; vertex < positions.count; vertex++) {
     .sort((a, b) => a.distance - b.distance)[0];
   // Smooth only across this single joint. No vertex can mix a torso/arm,
   // left/right, or arm/leg chain as the earlier proximity blend allowed.
-  const blend = THREE.MathUtils.smoothstep(nearest.amount, 0.15, 0.85);
+  // Arm joints need a narrow deformation zone. Blending the hand throughout
+  // the forearm lets noisy wrist rotation shear the entire limb into spikes.
+  // Keep the established leg behavior unchanged.
+  const blend = nearest.segment.isArm
+    ? THREE.MathUtils.smoothstep(nearest.amount, 0.78, 1.0)
+    : THREE.MathUtils.smoothstep(nearest.amount, 0.15, 0.85);
   skinIndices[vertex * 4] = nearest.segment.startIndex;
   skinIndices[vertex * 4 + 1] = nearest.segment.endIndex;
   skinWeights[vertex * 4] = 1 - blend;
