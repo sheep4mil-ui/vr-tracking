@@ -73,7 +73,7 @@ for (const mesh of oldMeshes) {
 }
 for (const mesh of oldMeshes) mesh.parent?.remove(mesh);
 
-const geometry = sourceMesh.geometry.clone();
+let geometry = sourceMesh.geometry.clone();
 geometry.applyMatrix4(sourceMesh.matrixWorld);
 geometry.computeBoundingBox();
 const sourceBox = geometry.boundingBox;
@@ -88,6 +88,10 @@ const scale = targetHeight / Math.max(sourceSize.y, 0.001);
 const normalize = new THREE.Matrix4().makeScale(scale, scale, scale);
 normalize.setPosition(-sourceCenter.x * scale, rigBounds.min.y - sourceBox.min.y * scale, -sourceCenter.z * scale);
 geometry.applyMatrix4(normalize);
+// Detach shared indexed vertices so a low-poly triangle can move as one rigid
+// face. Otherwise one corner can follow the torso while another follows a hand,
+// creating the enormous spikes visible in the recording.
+if (geometry.index) geometry = geometry.toNonIndexed();
 geometry.computeVertexNormals();
 geometry.computeBoundingBox();
 
@@ -105,8 +109,12 @@ for (const reference of referenceVertices) {
   if (!referenceGrid.has(key)) referenceGrid.set(key, []);
   referenceGrid.get(key).push(reference);
 }
-for (let vertex = 0; vertex < positions.count; vertex++) {
-  const point = new THREE.Vector3().fromBufferAttribute(positions, vertex);
+for (let triangle = 0; triangle + 2 < positions.count; triangle += 3) {
+  const point = new THREE.Vector3();
+  for (let corner = 0; corner < 3; corner++) {
+    point.add(new THREE.Vector3().fromBufferAttribute(positions, triangle + corner));
+  }
+  point.multiplyScalar(1 / 3);
   const cx = Math.floor(point.x / cellSize), cy = Math.floor(point.y / cellSize), cz = Math.floor(point.z / cellSize);
   let candidates = [];
   for (let radius = 0; radius <= 8 && candidates.length === 0; radius++) {
@@ -123,11 +131,13 @@ for (let vertex = 0; vertex < positions.count; vertex++) {
     const distance = point.distanceToSquared(candidate.point);
     if (distance < nearestDistance) { nearest = candidate; nearestDistance = distance; }
   }
-  if (!nearest) throw new Error(`No reference skin weights found for vertex ${vertex}.`);
+  if (!nearest) throw new Error(`No reference skin weights found for triangle ${triangle / 3}.`);
   const total = nearest.weights.reduce((sum, weight) => sum + weight, 0) || 1;
-  for (let slot = 0; slot < 4; slot++) {
-    skinIndices[vertex * 4 + slot] = nearest.indices[slot];
-    skinWeights[vertex * 4 + slot] = nearest.weights[slot] / total;
+  for (let corner = 0; corner < 3; corner++) {
+    for (let slot = 0; slot < 4; slot++) {
+      skinIndices[(triangle + corner) * 4 + slot] = nearest.indices[slot];
+      skinWeights[(triangle + corner) * 4 + slot] = nearest.weights[slot] / total;
+    }
   }
 }
 console.log(`Transferred skinning from ${referenceVertices.length} authored male-mesh vertices.`);
