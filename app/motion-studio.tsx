@@ -558,8 +558,13 @@ export default function MotionStudio() {
       if (node instanceof THREE.Mesh) {
         node.castShadow = true;
         node.receiveShadow = true;
-        node.material.transparent = false;
-        node.material.opacity = 1;
+        const materials = Array.isArray(node.material) ? node.material : [node.material];
+        materials.forEach((material) => {
+          material.transparent = false;
+          material.opacity = 1;
+          material.visible = true;
+          material.needsUpdate = true;
+        });
       }
     });
     scene.add(model);
