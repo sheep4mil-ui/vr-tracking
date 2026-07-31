@@ -294,7 +294,9 @@ export default function MotionStudio() {
     const leftArm = swapArmsRef.current ? right : left;
     const rightArm = swapArmsRef.current ? left : right;
     const table: Record<string, [THREE.Vector3, THREE.Vector3]> = {
-      hip: [hip.clone().add(new THREE.Vector3(0, -0.25, 0)), hip],
+      // Follow the live pelvis-to-torso axis. The previous artificial vertical
+      // segment never changed direction, leaving the pelvis frozen on every rig.
+      hip: [hip, shoulders],
       abdomen: [hip, shoulders.clone().lerp(hip, 0.48)],
       chest: [hip.clone().lerp(shoulders, 0.48), shoulders],
       neck: [shoulders, p[0]],
