@@ -50,6 +50,7 @@ export default function MotionStudio() {
   const [connectionState, setConnectionState] = useState("Not connected");
   const [swapSides, setSwapSides] = useState(true);
   const swapSidesRef = useRef(true);
+  const smoothedPointsRef = useRef<THREE.Vector3[]>([]);
 
   useEffect(() => {
     const mount = viewportRef.current;
@@ -199,7 +200,14 @@ export default function MotionStudio() {
 
   function updateRig(world: NormalizedLandmark[]) {
     if (!world.length) return;
-    const points = world.map((p) => new THREE.Vector3(-p.x * 3.2, -p.y * 3.2, -p.z * 3.2));
+    const mirror = swapSidesRef.current ? 1 : -1;
+    const rawPoints = world.map((p) => new THREE.Vector3(p.x * 3.2 * mirror, -p.y * 3.2, -p.z * 3.2));
+    if (smoothedPointsRef.current.length !== rawPoints.length) {
+      smoothedPointsRef.current = rawPoints.map((point) => point.clone());
+    } else {
+      rawPoints.forEach((point, index) => smoothedPointsRef.current[index].lerp(point, 0.58));
+    }
+    const points = smoothedPointsRef.current.map((point) => point.clone());
     const hip = points[23].clone().add(points[24]).multiplyScalar(0.5);
     const center = new THREE.Vector3(0, 0.15, 0).sub(hip);
     points.forEach((p, i) => jointsRef.current[i]?.position.copy(p.add(center)));
@@ -218,8 +226,8 @@ export default function MotionStudio() {
     const hip = p[23].clone().add(p[24]).multiplyScalar(0.5);
     const shoulders = p[11].clone().add(p[12]).multiplyScalar(0.5);
     const hand = (a: number, b: number, c: number) => p[a].clone().add(p[b]).add(p[c]).multiplyScalar(1 / 3);
-    const left = swapSidesRef.current ? { shoulder: 12, elbow: 14, wrist: 16, hand: [18, 20, 22], hip: 24, knee: 26, ankle: 28, foot: 32 } : { shoulder: 11, elbow: 13, wrist: 15, hand: [17, 19, 21], hip: 23, knee: 25, ankle: 27, foot: 31 };
-    const right = swapSidesRef.current ? { shoulder: 11, elbow: 13, wrist: 15, hand: [17, 19, 21], hip: 23, knee: 25, ankle: 27, foot: 31 } : { shoulder: 12, elbow: 14, wrist: 16, hand: [18, 20, 22], hip: 24, knee: 26, ankle: 28, foot: 32 };
+    const left = { shoulder: 11, elbow: 13, wrist: 15, hand: [17, 19, 21], hip: 23, knee: 25, ankle: 27, foot: 31 };
+    const right = { shoulder: 12, elbow: 14, wrist: 16, hand: [18, 20, 22], hip: 24, knee: 26, ankle: 28, foot: 32 };
     const table: Record<string, [THREE.Vector3, THREE.Vector3]> = {
       hip: [hip.clone().add(new THREE.Vector3(0, -0.25, 0)), hip],
       abdomen: [hip, shoulders.clone().lerp(hip, 0.48)],
@@ -346,7 +354,7 @@ export default function MotionStudio() {
         landmarkerRef.current = await PoseLandmarker.createFromOptions(vision, {
           baseOptions: {
             modelAssetPath:
-              "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task",
+              "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task",
             delegate: "GPU",
           },
           runningMode: "VIDEO",
@@ -501,7 +509,7 @@ export default function MotionStudio() {
                 setSwapSides(event.target.checked);
               }}
             />
-            Swap left/right tracking
+            Mirror avatar direction
           </label>
           <label className="file-button">
             <input type="file" accept=".glb,model/gltf-binary" onChange={loadModel} />
