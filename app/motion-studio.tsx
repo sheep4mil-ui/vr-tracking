@@ -9,7 +9,14 @@ import Peer, { type DataConnection } from "peerjs";
 type TrackerState = "idle" | "loading" | "ready" | "tracking" | "error";
 type DeviceMode = "phone" | "computer";
 type HandPose = "camera" | "open" | "fist" | "point" | "pinch" | "thumb";
-type JoyDevice = { device: HIDDevice; side: "l" | "r"; orientation: THREE.Quaternion; lastTime: number };
+type JoyDevice = {
+  device: HIDDevice;
+  side: "l" | "r";
+  orientation: THREE.Quaternion;
+  gyroBias: THREE.Vector3;
+  lastTime: number;
+  packet: number;
+};
 type BoneDriver = {
   bone: THREE.Bone;
   semantic: string;
@@ -55,6 +62,7 @@ export default function MotionStudio() {
   const [pairCode, setPairCode] = useState("");
   const [connectionState, setConnectionState] = useState("Not connected");
   const joyDevicesRef = useRef<JoyDevice[]>([]);
+  const activeJoyPoseRef = useRef<Record<"l" | "r", HandPose>>({ l: "camera", r: "camera" });
   const [joyStatus, setJoyStatus] = useState("Joy-Cons not connected");
   const [swapSides, setSwapSides] = useState(true);
   const swapSidesRef = useRef(true);
@@ -288,6 +296,11 @@ export default function MotionStudio() {
         driver.bone.updateMatrixWorld(true);
         continue;
       }
+      if (driver.semantic === "neck") {
+        driver.bone.quaternion.slerp(driver.restLocalQuaternion, 0.5);
+        driver.bone.updateMatrixWorld(true);
+        continue;
+      }
       if (upperBodyOnlyRef.current && /Thigh|Shin|Foot/.test(driver.semantic)) {
         driver.bone.quaternion.slerp(driver.restLocalQuaternion, 0.35);
         driver.bone.updateMatrixWorld(true);
@@ -301,7 +314,12 @@ export default function MotionStudio() {
       const desiredWorld = delta.multiply(driver.restWorldQuaternion);
       const parentWorld = new THREE.Quaternion();
       driver.bone.parent?.getWorldQuaternion(parentWorld);
-      driver.bone.quaternion.copy(parentWorld.invert().multiply(desiredWorld));
+      const desiredLocal = parentWorld.invert().multiply(desiredWorld);
+      driver.bone.quaternion.copy(
+        driver.semantic === "head"
+          ? driver.restLocalQuaternion.clone().slerp(desiredLocal, 0.42)
+          : desiredLocal
+      );
       driver.bone.updateMatrixWorld(true);
     }
   }
@@ -324,9 +342,15 @@ export default function MotionStudio() {
   function driveHand(handedness: string, raw: number[][]) {
     if (raw.length < 21) return;
     const side = handedness.toLowerCase().startsWith("left") ? "l" : "r";
+    const activePose = activeJoyPoseRef.current[side];
+    if (activePose !== "camera") {
+      applyHandPose(side, activePose);
+      return;
+    }
     const p = raw.map((point) => new THREE.Vector3(-Number(point[0]), -Number(point[1]), -Number(point[2])));
     const fingerStarts: Record<string, number> = { Thumb: 1, Index: 5, Middle: 9, Ring: 13, Pinky: 17 };
-    const wristDriver = [...rigRef.current.values()].find((driver) => driver.semantic === `${side}Hand`);
+    const joyConnected = joyDevicesRef.current.some((joy) => joy.side === side);
+    const wristDriver = joyConnected ? undefined : [...rigRef.current.values()].find((driver) => driver.semantic === `${side}Hand`);
     if (wristDriver) {
       const forward = p[9].clone().sub(p[0]).normalize();
       const across = side === "l" ? p[5].clone().sub(p[17]).normalize() : p[17].clone().sub(p[5]).normalize();
@@ -400,17 +424,28 @@ export default function MotionStudio() {
     const dt = Math.min((now - joy.lastTime) / 1000, 0.05);
     joy.lastTime = now;
     if (event.reportId !== 0x30 || data.byteLength < 24) return;
-    const gx = data.getInt16(18, true) * 0.0010653;
-    const gy = data.getInt16(20, true) * 0.0010653;
-    const gz = data.getInt16(22, true) * 0.0010653;
+    const rawGyro = new THREE.Vector3(
+      data.getInt16(18, true) * 0.0010653,
+      data.getInt16(20, true) * 0.0010653,
+      data.getInt16(22, true) * 0.0010653
+    );
+    if (rawGyro.length() < 0.18) joy.gyroBias.lerp(rawGyro, 0.025);
+    const corrected = rawGyro.clone().sub(joy.gyroBias);
+    const gx = corrected.x;
+    const gy = corrected.y;
+    const gz = corrected.z;
     const speed = Math.hypot(gx, gy, gz);
-    if (speed > 0.035) {
+    if (speed > 0.075) {
       joy.orientation.multiply(
         new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(gx, gy, gz).normalize(), speed * dt)
       ).normalize();
     }
+    joy.orientation.slerp(new THREE.Quaternion(), 0.0012);
     const shared = data.getUint8(3);
-    if (shared & (joy.side === "r" ? 0x04 : 0x08)) joy.orientation.identity();
+    if (shared & (joy.side === "r" ? 0x04 : 0x08)) {
+      joy.orientation.identity();
+      joy.gyroBias.copy(rawGyro);
+    }
     const wrist = [...rigRef.current.values()].find((driver) => driver.semantic === `${joy.side}Hand`);
     if (wrist) {
       wrist.bone.quaternion.copy(wrist.restLocalQuaternion).multiply(joy.orientation);
@@ -419,13 +454,21 @@ export default function MotionStudio() {
     const buttons = data.getUint8(joy.side === "r" ? 2 : 4);
     const triggerPressed = Boolean(buttons & 0x80);
     if (triggerPressed) {
+      activeJoyPoseRef.current[joy.side] = "fist";
       applyHandPose(joy.side, "fist");
       return;
     }
     const pose: HandPose = joy.side === "r"
       ? buttons & 0x08 ? "open" : buttons & 0x04 ? "fist" : buttons & 0x02 ? "point" : buttons & 0x01 ? "pinch" : buttons & 0x40 ? "thumb" : "camera"
       : buttons & 0x02 ? "open" : buttons & 0x01 ? "fist" : buttons & 0x04 ? "point" : buttons & 0x08 ? "pinch" : buttons & 0x40 ? "thumb" : "camera";
+    activeJoyPoseRef.current[joy.side] = pose;
     if (pose !== "camera") applyHandPose(joy.side, pose);
+  }
+
+  async function sendJoySubcommand(joy: JoyDevice, command: number, args: number[]) {
+    const neutralRumble = [0x00, 0x01, 0x40, 0x40, 0x00, 0x01, 0x40, 0x40];
+    const packet = new Uint8Array([joy.packet++ & 0x0f, ...neutralRumble, command, ...args]);
+    await joy.device.sendReport(0x01, packet);
   }
 
   async function connectJoyCons() {
@@ -447,9 +490,13 @@ export default function MotionStudio() {
           device,
           side: device.productId === 0x2006 ? "l" : "r",
           orientation: new THREE.Quaternion(),
+          gyroBias: new THREE.Vector3(),
           lastTime: performance.now(),
+          packet: 0,
         };
         device.addEventListener("inputreport", (event) => handleJoyReport(joy, event as HIDInputReportEvent));
+        await sendJoySubcommand(joy, 0x40, [0x01]);
+        await sendJoySubcommand(joy, 0x03, [0x30]);
         connected.push(joy);
       }
       joyDevicesRef.current = connected;

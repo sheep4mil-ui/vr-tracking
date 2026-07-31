@@ -2,6 +2,7 @@ interface HIDDevice extends EventTarget {
   opened: boolean;
   productId: number;
   open(): Promise<void>;
+  sendReport(reportId: number, data: BufferSource): Promise<void>;
 }
 interface HIDInputReportEvent extends Event {
   readonly data: DataView;
